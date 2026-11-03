@@ -1,0 +1,40 @@
+--- src018/src/robot_infra/teleop_session.py	2026-10-22 17:24:36.000000000 +0800
++++ src021/src/robot_infra/teleop_session.py	2026-10-24 16:15:23.000000000 +0800
+@@ -66,7 +66,7 @@
+         from .real_episode import validate_recording
+         validate_recording(c.get('recording',{}))
+     transport=c.get('webxr_transport',{})
+-    if transport.get('input','http') not in ('http','websocket'):raise ValueError('unsupported input transport')
++    if transport.get('input','http') not in ('http','websocket','webrtc'):raise ValueError('unsupported input transport')
+     if transport.get('input')=='websocket' and (type(transport.get('port')) is not int or not 1<=transport['port']<=65535):raise ValueError('explicit control port required')
+     for key in ('preview_congestion_rtt_ms','preview_congestion_fps'):
+         if key in transport and (type(transport[key]) not in (int,float) or not math.isfinite(transport[key]) or transport[key]<=0):raise ValueError('invalid transport setting')
+@@ -98,7 +98,8 @@
+ 
+ 
+ class TeleopSession:
+-    def __init__(self, gateway, workers, *, ready_check=lambda: (True,[]), clock=time.monotonic, recorder=None, recording_context=lambda: {}):
++    def __init__(self, gateway, workers, *, ready_check=lambda: (True,[]), clock=time.monotonic, recorder=None, recording_context=lambda: {}, metrics=None):
++        self.metrics=metrics
+         self.g, self.config, self.clock = gateway, gateway.config, clock
+         self.workers, self.ready_check = workers, ready_check
+         self.recorder,self.recording_context=recorder,recording_context
+@@ -384,12 +385,18 @@
+ 
+     def start(self):
+         def run():
++            previous=None
+             while not self.closing.is_set():
++                began=time.monotonic_ns()
++                if self.metrics and previous is not None:self.metrics.observe('control.tick_interval',(began-previous)/1e6)
++                previous=began
+                 try:self.tick()
+                 except Exception as exc:
+                     with self.lock:
+                         try:self._pause('session_error: '+str(exc),fault=True)
+                         except Exception:self.g.stop('session_failure',fault=True)
++                finally:
++                    if self.metrics:self.metrics.elapsed('control.tick_work',began)
+                 self.closing.wait(1/self.config['session']['control_hz'])
+         self.thread=threading.Thread(target=run,name='teleop-control',daemon=True);self.thread.start()
+ 

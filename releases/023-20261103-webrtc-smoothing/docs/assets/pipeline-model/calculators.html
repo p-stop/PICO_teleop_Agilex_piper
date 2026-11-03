@@ -1,0 +1,30 @@
+<section id="experiments">
+<h2>把设计假设放进数字里</h2>
+<p>两个计算器都使用教学模型。调整数值只改变这张页面，不会修改机器人配置。</p>
+<section class="experiment" id="ik-experiment">
+<div class="tag">实验 01 · 对应第三课</div>
+<h3>相同的“每次平滑”，不同的实际等待</h3>
+<p>单方向递推 q ← q + α(1 − q)，初值 0.40 rad、恒定目标 1.00 rad。曲线是 IK 目标的标量近似，未包含真实机器人动力学。</p>
+<div class="controls">
+<label>每次更新比例 α <output id="alpha-value">0.25</output><input id="ik-alpha" aria-label="每次更新比例" type="range" min="0.05" max="0.95" step="0.05" value="0.25"></label>
+<label>新解率 <output id="hz-value">10 Hz</output><input id="ik-hz" aria-label="每秒新解数" type="range" min="5" max="60" step="1" value="10"></label>
+</div>
+<div id="ik-chart" class="chart" aria-label="IK 目标随物理时间变化的阶梯曲线"></div>
+<p id="ik-status" class="status" aria-live="polite"></p>
+<p class="note">时间常数 τ = −1 / (f ln(1−α))。初值定义在 t=0，第一次更新在 1/f。真实 IK 的非线性、限位和不同 Jacobian 方向不能由一个 α 完整表示。</p>
+</section>
+<section class="experiment" id="budget-experiment">
+<div class="tag">实验 02 · 对应第六课</div>
+<h3>旧动作没用完，新动作仍可能被拒绝</h3>
+<p>从请求发起到控制线程消费结果的延迟为 L。下表只检查四个时间预算；通过不代表身份、动作语义、接缝或物理执行也通过。</p>
+<div class="controls">
+<label>总延迟 L <output id="latency-value"></output><input id="latency" aria-label="请求到消费总延迟" type="range" min="0" max="600" step="10" value="100"></label>
+<label>首动作提前量 lead <output id="lead-value"></output><input id="lead" aria-label="首动作提前量" type="range" min="10" max="600" step="10" value="80"></label>
+<label>旧队列覆盖 B <output id="buffer-value"></output><input id="buffer" aria-label="旧队列可覆盖时间" type="range" min="0" max="800" step="10" value="500"></label>
+<label>请求时观测年龄 <output id="age-value"></output><input id="age" aria-label="请求时观测年龄" type="range" min="0" max="500" step="10" value="30"></label>
+</div>
+<p class="note">固定教学参数：request deadline 300 ms，最大观测年龄 400 ms，队列余量 M=40 ms。前两项上限对应当前构造默认值，M 是教学假设。</p>
+<div class="table-scroll"><table><thead><tr><th>条件</th><th>可用余量</th><th>结果</th></tr></thead><tbody id="budget-rows"></tbody></table></div>
+<p id="budget-status" class="status" aria-live="polite"></p>
+<p class="note">首动作余量必须严格大于 0；其它三个条件允许等号。增大 lead 可以避免本次过期，却会把执行安排到更远的未来，仍需计入任务反应年龄。</p>
+</section></section>

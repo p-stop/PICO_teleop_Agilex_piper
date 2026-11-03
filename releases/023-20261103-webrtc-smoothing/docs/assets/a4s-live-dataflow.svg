@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1060" viewBox="0 0 1440 1060" role="img" aria-label="双 Piper VR 遥操、三相机显示与记录的数据流"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#5b8696"/></marker><style>text{font-family:'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#163342}.title{font-size:29px;font-weight:700}.sub{font-size:17px;fill:#466879}.label{font-size:20px;font-weight:600}.detail{font-size:16px;fill:#3c6370}.edge{fill:none;stroke:#5b8696;stroke-width:2.5;marker-end:url(#arrow)}.future{stroke-dasharray:8 6}</style></defs><rect width="1440" height="1060" fill="#f3f7fa"/><text x="42" y="48" class="title">A4-S：双臂 VR 控制 · 三相机观看 · 执行证据</text><text x="42" y="79" class="sub">实线：本轮实验路径　虚线：后续接入　主机：Ubuntu 24.04 / ROS Jazzy　底盘与升降不参与</text>
+<rect x="38" y="120" width="285" height="150" rx="13" fill="#dcf4ed" stroke="#a9c2cc" />
+<text x="56" y="152" class="label">PICO 浏览器：原始输入</text>
+<text x="56" y="180" class="detail">头显 / 左右手柄 / 按键</text>
+<text x="56" y="204" class="detail">米、xyzw、session、seq、epoch</text>
+<text x="56" y="228" class="detail">最新帧发送；不积压旧目标</text>
+<rect x="385" y="120" width="370" height="150" rx="13" fill="#e1edf8" stroke="#a9c2cc" />
+<text x="403" y="152" class="label">相对位置映射 / 侧握键离合</text>
+<text x="403" y="180" class="detail">接合：保存手柄位置 + 实测 FK</text>
+<text x="403" y="204" class="detail">位移 1:1；朝向保持；夹爪禁写</text>
+<text x="403" y="228" class="detail">R_align 为待现场核验候选</text>
+<rect x="385" y="310" width="370" height="150" rx="13" fill="#e1edf8" stroke="#a9c2cc" />
+<text x="403" y="342" class="label">模型 + FK / 本地 IK</text>
+<text x="403" y="370" class="detail">显式 URDF hash、base、tip</text>
+<text x="403" y="394" class="detail">输入目标 + 反馈 → 具名关节</text>
+<text x="403" y="418" class="detail">输出残差、耗时、成功/拒绝</text>
+<rect x="385" y="500" width="370" height="175" rx="13" fill="#ffedce" stroke="#a9c2cc" />
+<text x="403" y="532" class="label">设备本地控制网关</text>
+<text x="403" y="560" class="detail">组 owner / epoch / 有效期</text>
+<text x="403" y="584" class="detail">反馈新鲜度 / 限位 / 速度</text>
+<text x="403" y="608" class="detail">完整双臂预检 + 每侧发送前重查</text>
+<text x="403" y="632" class="detail">失败撤权；新鲜反馈可用时保持</text>
+<rect x="835" y="500" width="285" height="175" rx="13" fill="#e9e8fa" stroke="#a9c2cc" />
+<text x="853" y="532" class="label">Piper ROS 适配器</text>
+<text x="853" y="560" class="detail">left.arm → 左驱动消息</text>
+<text x="853" y="584" class="detail">right.arm → 右驱动消息</text>
+<text x="853" y="608" class="detail">最后一层编码旧速度字段</text>
+<text x="853" y="632" class="detail">发布 ≠ 确认已执行</text>
+<rect x="1190" y="500" width="215" height="175" rx="13" fill="#e9e8fa" stroke="#a9c2cc" />
+<text x="1208" y="532" class="label">现有驱动 → CAN</text>
+<text x="1208" y="560" class="detail">左臂 can0</text>
+<text x="1208" y="584" class="detail">右臂 can2</text>
+<text x="1208" y="608" class="detail">SDK / 电机</text>
+<text x="1208" y="632" class="detail">禁止绕过网关</text>
+<rect x="835" y="305" width="285" height="140" rx="13" fill="#dcf4ed" stroke="#a9c2cc" />
+<text x="853" y="337" class="label">双臂实际反馈缓存</text>
+<text x="853" y="365" class="detail">joint1…joint6 / 夹爪</text>
+<text x="853" y="389" class="detail">保留 SDK / ROS 原始时间</text>
+<text x="853" y="413" class="detail">重复发布不刷新 CAN 时效</text>
+<rect x="835" y="120" width="285" height="135" rx="13" fill="#fff" stroke="#a9c2cc" stroke-dasharray="8 6"/>
+<text x="853" y="152" class="label">后续策略意图源</text>
+<text x="853" y="180" class="detail">观测 → 模型 → 动作解码</text>
+<text x="853" y="204" class="detail">关节输出可复用同一网关</text>
+<text x="853" y="228" class="detail">模型部署与任务效果另验</text>
+<rect x="38" y="745" width="285" height="145" rx="13" fill="#dcf4ed" stroke="#a9c2cc" />
+<text x="56" y="777" class="label">三相机 ROS RGB / 内参</text>
+<text x="56" y="805" class="detail">左腕 D435 / 右腕 D435</text>
+<text x="56" y="829" class="detail">固定 D455：中央主视角</text>
+<text x="56" y="853" class="detail">640×480 / 15FPS 配置</text>
+<rect x="385" y="745" width="370" height="145" rx="13" fill="#e1edf8" stroke="#a9c2cc" />
+<text x="403" y="777" class="label">独立预览缓存 / JPEG</text>
+<text x="403" y="805" class="detail">每路取最新帧，约 8FPS 上限</text>
+<text x="403" y="829" class="detail">HTTPS → 头显三块平面</text>
+<text x="403" y="853" class="detail">中央大画面，两侧小腕部画面</text>
+<rect x="835" y="745" width="570" height="145" rx="13" fill="#ffedce" stroke="#a9c2cc" />
+<text x="853" y="777" class="label">本轮证据：JSONL + JPEG 预览 sidecars</text>
+<text x="853" y="805" class="detail">原始输入 / 目标 / IK / guard / 命令 / 发送记录 / 反馈</text>
+<text x="853" y="829" class="detail">每图原始 stamp、接收时间、路径和 hash</text>
+<text x="853" y="853" class="detail">独立有界写队列；当前还不是原始 RGB 同步采集 episode</text>
+<path d="M323 195H385" class="edge"/>
+<path d="M570 270V310" class="edge"/>
+<path d="M570 460V500" class="edge"/>
+<path d="M755 585H835" class="edge"/>
+<path d="M1120 585H1190" class="edge"/>
+<path d="M1290 500V375H1120" class="edge"/>
+<path d="M835 375H790V195H755" class="edge"/>
+<path d="M835 400H790V550H755" class="edge"/>
+<path d="M980 255V285H790V520H755" class="edge future"/>
+<path d="M323 815H385" class="edge"/>
+<path d="M570 745V710H180V270" class="edge"/>
+<path d="M755 815H835" class="edge"/>
+<path d="M980 675V745" class="edge"/>
+<path d="M1120 385H1155V775H1120" class="edge"/>
+<path d="M755 385H775V915H1060V890" class="edge"/>
+<text x="42" y="970" class="label">读图方式</text><text x="42" y="1003" class="sub">上半部：人的意图如何成为设备命令，以及实际状态如何返回。下半部：现场如何被看到、每一步如何留下证据。</text><text x="42" y="1032" class="sub">本轮真实控制只开放双臂；夹爪、旋转遥操、完整 MCAP episode、避碰和真实策略仍需后续独立验证。</text></svg>

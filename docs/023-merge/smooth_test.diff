@@ -1,0 +1,65 @@
+--- src018/tests/test_teleop_session.py	2026-10-22 17:24:36.000000000 +0800
++++ src022/tests/test_teleop_session.py	2026-11-03 11:16:47.000000000 +0800
+@@ -100,9 +100,9 @@
+     assert b.jaws=={'left':.03,'right':.03}
+     count=len(b.calls);step(A=1.)
+     assert r.state=='TELEOP' and len(b.calls)==count  # start does not move/enable
+-    step(A=0.);step(left=1.,trigger=.5);step(x=.08)
+-    step(x=.08)
+-    assert b.q['left'][0]>.05 and b.jaws['left']==pytest.approx(.035)
++    step(A=0.);step(left=1.,trigger=.5)
++    for _ in range(40):step(x=.08)  # shaped commands reach the target gradually
++    assert 0.<b.q['left'][0]<=.08 and b.jaws['left']==pytest.approx(.035)
+     assert b.q['right']==pytest.approx([0.,0.]) and b.jaws['right']==.03
+     step(left=0.)
+     assert not g.active_sides
+@@ -159,7 +159,8 @@
+ 
+ 
+ def test_free_target_has_no_commissioning_cartesian_envelope(rig):
+-    r,g,b,w,step,t,e=rig;to_ready(rig);step(A=1.);step(A=0.,left=1.);step(x=.7);step(x=.7)
++    r,g,b,w,step,t,e=rig;to_ready(rig);step(A=1.);step(A=0.,left=1.)
++    for _ in range(80):step(x=.7)  # rate shaping still reaches large deltas
+     assert b.q['left'][0]>.6
+     assert not [p for k,p in e if k=='guard' and p.get('reason')=='test_envelope']
+ 
+@@ -307,3 +308,39 @@
+     node.gripper_callback(Message());assert node.piper.calls==[(70000,1000,1,0)]
+     Message.position=[.09]
+     with pytest.raises(ValueError):node.gripper_callback(Message())
++
++
++def test_input_deadband_holds_small_grip_jitter(rig):
++    r,g,b,w,step,t,e=rig;to_ready(rig);step(A=1.);step(A=0.,left=1.)
++    for _ in range(5):step(x=.001)  # below the default 2.5mm deadband
++    assert b.q['left'][0]==0.
++
++
++def test_command_shaping_limits_per_cycle_joint_step(rig):
++    r,g,b,w,step,t,e=rig;to_ready(rig);step(A=1.);step(A=0.,left=1.)
++    for _ in range(3):step(x=.5)
++    previous=b.q['left'][0];assert 0.<previous<.5
++    step();assert previous<b.q['left'][0]<=previous+.015
++
++
++def test_unconverged_solutions_do_not_become_targets(rig):
++    r,g,b,w,step,t,e=rig;to_ready(rig);step(A=1.);step(A=0.,left=1.)
++    for _ in range(5):step(x=.1)
++    w['left'].resolve=False
++    w['left'].result={'token':r.tokens['left'],'goal_seq':0,'created_s':t[0],
++                      'result':{'accepted':True,'positions':[.5,.5],'reason':'best_effort','position_error_m':.02}}
++    before=b.q['left'][0];step()
++    assert r.targets['left'][0]<.2 and b.q['left'][0]<=before+.015
++    w['left'].result={'token':r.tokens['left'],'goal_seq':0,'created_s':t[0],
++                      'result':{'accepted':True,'positions':[.5,.5],'reason':'converged','position_error_m':.001}}
++    step();assert r.targets['left']==(.5,.5)
++
++
++def test_teleop_filter_profile_keys_are_validated(rig):
++    r,*_=rig
++    c=deepcopy(r.config);c['teleop_filter']={'command_alpha':.5,'position_deadband_m':.003}
++    validate_session_profile(c)
++    c['teleop_filter']={'unknown_key':1}
++    with pytest.raises(ValueError,match='teleop_filter'):validate_session_profile(c)
++    c['teleop_filter']={'command_alpha':0.}
++    with pytest.raises(ValueError,match='ratio'):validate_session_profile(c)

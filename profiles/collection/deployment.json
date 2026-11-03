@@ -1,0 +1,24 @@
+{
+  "schema_version": "robot-deployment/1",
+  "config": "/home/ros/zero-wam/PICO-ACT/profiles/collection/session.json",
+  "camera_config": "/home/ros/zero-wam/PICO-ACT/profiles/collection/cameras.json",
+  "camera_driver": "/opt/ros/jazzy/lib/realsense2_camera/realsense2_camera_node",
+  "ros_domain_id": 64,
+  "host": "0.0.0.0",
+  "port": 8445,
+  "advertise_host": "192.168.87.133",
+  "duration": 0,
+  "cert": "/home/ros/zero-wam/PICO-ACT/profiles/collection/cert.pem",
+  "key": "/home/ros/zero-wam/PICO-ACT/profiles/collection/key.pem",
+  "output_root": "/home/ros/zero-wam/PICO-ACT/runs",
+  "setup_scripts": [
+    "/opt/ros/jazzy/setup.bash",
+    "/home/ros/ros2_ws/install/setup.bash"
+  ],
+  "python_paths": [
+    "/home/ros/zero-wam/PICO-ACT/releases/023-20261103-webrtc-smoothing/src",
+    "/home/ros/zero-wam/PICO-ACT/python-deps-webrtc-021",
+    "/home/ros/zero-wam/PICO-ACT/python-deps",
+    "/home/ros/zero-wam/PICO-ACT/python-deps-mp4"
+  ]
+}

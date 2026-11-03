@@ -1,0 +1,58 @@
+<div id="experiments">
+  <section class="experiment" id="experiment-a">
+    <div class="tag">A · 采样与混叠</div>
+    <h3>样本之间，究竟发生了什么？</h3>
+    <p class="note">教学正弦，幅值 1 rad。尝试 18 Hz 输入 / 30 Hz 采样，再把采样改成 60 Hz。负别名频率表示相位反向。此实验没有噪声、抖动或有限窗 sinc 重建。</p>
+    <div class="controls">
+      <label>输入频率 <output for="frequency">18</output> Hz<input id="frequency" data-update="sampling" type="range" min="0.5" max="24" step="0.5" value="18"></label>
+      <label>采样率 <output for="sample-rate">30</output> Hz<input id="sample-rate" data-update="sampling" type="range" min="4" max="90" step="1" value="30"></label>
+      <label>重建方法<select id="interpolation" data-update="sampling"><option value="linear">线性插值</option><option value="hold">零阶保持</option></select></label>
+    </div>
+    <div id="sampling-chart" class="chart" data-label="真实正弦、采样点与重建曲线"></div>
+    <p id="sampling-status" class="status" aria-live="polite"></p>
+  </section>
+  <section class="experiment" id="experiment-b">
+    <div class="tag">B · 控制与记录解耦</div>
+    <h3>记录得更快，机械臂就会跟得更好吗？</h3>
+    <p class="note">假设一阶执行器 dq/dt = 2πB(u−q)，初值为零，使用 1 ms 网格和分段常值输入精确积分。参考是 1 Hz 与 5 Hz 正弦之和。先只调“记录频率”：模拟运动不应变化。这里没有 IK 或真实 Piper 动力学。</p>
+    <div class="controls">
+      <label>手柄新样本 <output for="hand-rate">30</output> Hz<input id="hand-rate" data-update="plant" type="range" min="5" max="90" value="30"></label>
+      <label>控制发布 <output for="control-rate">60</output> Hz<input id="control-rate" data-update="plant" type="range" min="10" max="120" value="60"></label>
+      <label>记录频率 <output for="record-rate">30</output> Hz<input id="record-rate" data-update="plant" type="range" min="5" max="120" value="30"></label>
+      <label>输入→控制延迟 <output for="delay">70</output> ms<input id="delay" data-update="plant" type="range" min="0" max="250" step="5" value="70"></label>
+      <label>执行器带宽 B <output for="bandwidth">3</output> Hz<input id="bandwidth" data-update="plant" type="range" min="0.5" max="12" step="0.5" value="3"></label>
+      <label>2 s 处丢失记录窗口 <output for="gap">0</output> ms<input id="gap" data-update="plant" type="range" min="0" max="300" step="25" value="0"></label>
+    </div>
+    <div id="plant-chart" class="chart" data-label="模拟连续运动与离散记录"></div>
+    <div id="record-chart" class="chart" data-label="离散记录线性重建相对模拟真值的误差"></div>
+    <p id="plant-status" class="status" aria-live="polite"></p>
+    <p class="note">延迟与低带宽改变实际响应；降采样与漏记改变我们知道多少。现实中记录过载也会争抢资源，本教学模型刻意隔离这一耦合。零间隙也不保证线性重建精确。</p>
+  </section>
+  <section class="experiment" id="experiment-c">
+    <div class="tag">C · 推理时间预算</div>
+    <h3>下一段动作，能赶在队列用完前到达吗？</h3>
+    <div class="controls">
+      <label>Chunk 长度 N <output for="chunk-n">16</output><input id="chunk-n" data-update="chunks" type="range" min="4" max="64" value="16"></label>
+      <label>已执行 K 步后发请求 <output for="chunk-k">8</output><input id="chunk-k" data-update="chunks" type="range" min="1" max="15" value="8"></label>
+      <label>动作频率<select id="action-hz" data-update="chunks"><option>10</option><option>20</option><option selected>30</option><option>60</option></select></label>
+      <label>模型+传输 <output for="model-delay">180</output> ms<input id="model-delay" data-update="chunks" type="range" min="20" max="800" step="10" value="180"></label>
+      <label>调度裕量 <output for="margin">40</output> ms<input id="margin" data-update="chunks" type="range" min="0" max="150" step="10" value="40"></label>
+    </div>
+    <div id="chunk-chart" class="chart"></div>
+    <p id="chunk-status" class="status" aria-live="polite"></p>
+    <p id="chunk-detail" class="note"></p>
+    <p class="note">这只是时序预算。RTC 还要在模型生成过程中利用旧计划前缀；“有异步线程和动作缓冲”本身不等于 RTC。首段动作预先就绪，启动阶段延迟未画入。</p>
+  </section>
+  <section class="experiment" id="experiment-d">
+    <div class="tag">D · 本项目真实证据</div>
+    <h3>2026-10-20：三秒回放的目标与反馈</h3>
+    <p class="note">本地 JSONL 提取，未做时间平移或平滑。发布 receipt 不代表硬件执行 ACK；收到反馈的时间也不代表真实采样时刻。这里不是原示范与回放的轨迹复现精度对照。</p>
+    <div class="controls">
+      <label>机械臂<select id="real-arm" data-update="real"><option value="left">左臂</option><option value="right">右臂</option></select></label>
+      <label>关节<select id="real-joint" data-update="real"><option value="1">Joint 1</option><option value="2" selected>Joint 2</option><option value="3">Joint 3</option><option value="4">Joint 4</option><option value="5">Joint 5</option><option value="6">Joint 6</option></select></label>
+    </div>
+    <div id="real-chart" class="chart" data-label="真实回放某关节的目标与反馈"></div>
+    <p id="real-status" class="status" aria-live="polite"></p>
+    <p class="note"><a href="assets/signal-timing/replay-series.csv">下载数值 CSV</a> · <a href="assets/signal-timing/evidence.json">统计定义与来源哈希</a> · <a href="assets/signal-timing/replay-tracking.svg">六关节静态图</a></p>
+  </section>
+</div>

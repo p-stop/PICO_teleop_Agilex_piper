@@ -1,0 +1,97 @@
+{
+  "schema_version": "realsense-streams/2",
+  "cameras": [
+    {
+      "role": "left_wrist",
+      "serial_namespace": "realsense_sdk",
+      "serial": "022422072252",
+      "capture": {
+        "rgb": {
+          "width": 640,
+          "height": 480,
+          "fps": 30
+        },
+        "depth": null
+      },
+      "preview": {
+        "width": 480,
+        "height": 360,
+        "fps": 8,
+        "jpeg_quality": 75
+      },
+      "record": {
+        "rgb": {
+          "width": 640,
+          "height": 480,
+          "fps": 30
+        },
+        "depth": null
+      },
+      "driver_parameters": {}
+    },
+    {
+      "role": "right_wrist",
+      "serial_namespace": "realsense_sdk",
+      "serial": "342522071110",
+      "capture": {
+        "rgb": {
+          "width": 640,
+          "height": 480,
+          "fps": 30
+        },
+        "depth": null
+      },
+      "preview": {
+        "width": 480,
+        "height": 360,
+        "fps": 8,
+        "jpeg_quality": 75
+      },
+      "record": {
+        "rgb": {
+          "width": 640,
+          "height": 480,
+          "fps": 30
+        },
+        "depth": null
+      },
+      "driver_parameters": {}
+    },
+    {
+      "role": "scene_fixed",
+      "serial_namespace": "realsense_sdk",
+      "serial": "254922307547",
+      "capture": {
+        "rgb": {
+          "width": 640,
+          "height": 480,
+          "fps": 30
+        },
+        "depth": {
+          "width": 640,
+          "height": 480,
+          "fps": 30
+        }
+      },
+      "preview": {
+        "width": 480,
+        "height": 360,
+        "fps": 8,
+        "jpeg_quality": 75
+      },
+      "record": {
+        "rgb": {
+          "width": 640,
+          "height": 480,
+          "fps": 30
+        },
+        "depth": {
+          "width": 640,
+          "height": 480,
+          "fps": 30
+        }
+      },
+      "driver_parameters": {}
+    }
+  ]
+}

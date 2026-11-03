@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>从手柄到策略 · 信号与时间研究</title><link rel="stylesheet" href="assets/signal-timing/report.css"></head>
+<body><div class="shell"><aside><div class="brand">ROBOT INFRA / RESEARCH 015</div>
+<a href="#experiments">交互实验 A–D</a><a href="#report">完整研究报告</a>
+<a href="research/2026-10-20-signal-timing-and-learning.md">Obsidian / Markdown 源文</a>
+<div class="toc"><div class="toc">
+<ul>
+<li><a href="#_1">从手柄到策略：遥操信号、采样与时间契约</a><ul>
+<li><a href="#1">1. 先给每一种“信号”命名</a></li>
+<li><a href="#2-hz">2. 我们现在究竟以多少 Hz 工作</a></li>
+<li><a href="#3-ik">3. IK 不是一根透明的线</a></li>
+<li><a href="#4">4. 离散轨迹能恢复连续运动吗</a></li>
+<li><a href="#5">5. 真机回放给了我们什么证据</a></li>
+<li><a href="#6">6. 采样、延迟、抖动如何共同决定质量</a></li>
+<li><a href="#7">7. 对训练：先定义标签，再讨论网络</a></li>
+<li><a href="#8-chunk-rtc">8. 对推理：chunk 解决计算吞吐，RTC 处理连续衔接</a></li>
+<li><a href="#9">9. 如何落实到“模块化、通用化、配置化”</a></li>
+<li><a href="#10">10. 下一轮实验怎样证明改进有效</a></li>
+<li><a href="#11">11. 证据、复现与阅读路线</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div></aside><main>
+<header class="hero"><div class="eyebrow">SIGNALS · SAMPLING · EXECUTION</div>
+<h1>从手柄到策略<br>每一帧，发生在什么时候？</h1>
+<p class="lead">把连续运动、离散数据和模型动作连接起来。用四个实验理解：采到了什么、丢掉了什么，以及回放究竟能恢复什么。</p>
+<p class="scope">2026-10-20 · 原始论文 × 当前源码 × 已录真机证据<br>前三个实验是教学模型；第四个来自真实三秒回放。本页不连接机器人。</p>
+<nav class="jump" aria-label="实验导航"><a href="#experiment-a">A 采样与混叠</a><a href="#experiment-b">B 控制与记录</a><a href="#experiment-c">C Chunk 时间预算</a><a href="#experiment-d">D 真实回放</a></nav></header>
+<div id="experiments">
+  <section class="experiment" id="experiment-a">
+    <div class="tag">A · 采样与混叠</div>
+    <h3>样本之间，究竟发生了什么？</h3>
+    <p class="note">教学正弦，幅值 1 rad。尝试 18 Hz 输入 / 30 Hz 采样，再把采样改成 60 Hz。负别名频率表示相位反向。此实验没有噪声、抖动或有限窗 sinc 重建。</p>
+    <div class="controls">
+      <label>输入频率 <output for="frequency">18</output> Hz<input id="frequency" data-update="sampling" type="range" min="0.5" max="24" step="0.5" value="18"></label>
+      <label>采样率 <output for="sample-rate">30</output> Hz<input id="sample-rate" data-update="sampling" type="range" min="4" max="90" step="1" value="30"></label>
+      <label>重建方法<select id="interpolation" data-update="sampling"><option value="linear">线性插值</option><option value="hold">零阶保持</option></select></label>
+    </div>
+    <div id="sampling-chart" class="chart" data-label="真实正弦、采样点与重建曲线"></div>
+    <p id="sampling-status" class="status" aria-live="polite"></p>
+  </section>
+  <section class="experiment" id="experiment-b">
+    <div class="tag">B · 控制与记录解耦</div>
+    <h3>记录得更快，机械臂就会跟得更好吗？</h3>
+    <p class="note">假设一阶执行器 dq/dt = 2πB(u−q)，初值为零，使用 1 ms 网格和分段常值输入精确积分。参考是 1 Hz 与 5 Hz 正弦之和。先只调“记录频率”：模拟运动不应变化。这里没有 IK 或真实 Piper 动力学。</p>
+    <div class="controls">
+      <label>手柄新样本 <output for="hand-rate">30</output> Hz<input id="hand-rate" data-update="plant" type="range" min="5" max="90" value="30"></label>
+      <label>控制发布 <output for="control-rate">60</output> Hz<input id="control-rate" data-update="plant" type="range" min="10" max="120" value="60"></label>
+      <label>记录频率 <output for="record-rate">30</output> Hz<input id="record-rate" data-update="plant" type="range" min="5" max="120" value="30"></label>
+      <label>输入→控制延迟 <output for="delay">70</output> ms<input id="delay" data-update="plant" type="range" min="0" max="250" step="5" value="70"></label>
+      <label>执行器带宽 B <output for="bandwidth">3</output> Hz<input id="bandwidth" data-update="plant" type="range" min="0.5" max="12" step="0.5" value="3"></label>
+      <label>2 s 处丢失记录窗口 <output for="gap">0</output> ms<input id="gap" data-update="plant" type="range" min="0" max="300" step="25" value="0"></label>
+    </div>
+    <div id="plant-chart" class="chart" data-label="模拟连续运动与离散记录"></div>
+    <div id="record-chart" class="chart" data-label="离散记录线性重建相对模拟真值的误差"></div>
+    <p id="plant-status" class="status" aria-live="polite"></p>
+    <p class="note">延迟与低带宽改变实际响应；降采样与漏记改变我们知道多少。现实中记录过载也会争抢资源，本教学模型刻意隔离这一耦合。零间隙也不保证线性重建精确。</p>
+  </section>
+  <section class="experiment" id="experiment-c">
+    <div class="tag">C · 推理时间预算</div>
+    <h3>下一段动作，能赶在队列用完前到达吗？</h3>
+    <div class="controls">
+      <label>Chunk 长度 N <output for="chunk-n">16</output><input id="chunk-n" data-update="chunks" type="range" min="4" max="64" value="16"></label>
+      <label>已执行 K 步后发请求 <output for="chunk-k">8</output><input id="chunk-k" data-update="chunks" type="range" min="1" max="15" value="8"></label>
+      <label>动作频率<select id="action-hz" data-update="chunks"><option>10</option><option>20</option><option selected>30</option><option>60</option></select></label>
+      <label>模型+传输 <output for="model-delay">180</output> ms<input id="model-delay" data-update="chunks" type="range" min="20" max="800" step="10" value="180"></label>
+      <label>调度裕量 <output for="margin">40</output> ms<input id="margin" data-update="chunks" type="range" min="0" max="150" step="10" value="40"></label>
+    </div>
+    <div id="chunk-chart" class="chart"></div>
+    <p id="chunk-status" class="status" aria-live="polite"></p>
+    <p id="chunk-detail" class="note"></p>
+    <p class="note">这只是时序预算。RTC 还要在模型生成过程中利用旧计划前缀；“有异步线程和动作缓冲”本身不等于 RTC。首段动作预先就绪，启动阶段延迟未画入。</p>
+  </section>
+  <section class="experiment" id="experiment-d">
+    <div class="tag">D · 本项目真实证据</div>
+    <h3>2026-10-20：三秒回放的目标与反馈</h3>
+    <p class="note">本地 JSONL 提取，未做时间平移或平滑。发布 receipt 不代表硬件执行 ACK；收到反馈的时间也不代表真实采样时刻。这里不是原示范与回放的轨迹复现精度对照。</p>
+    <div class="controls">
+      <label>机械臂<select id="real-arm" data-update="real"><option value="left">左臂</option><option value="right">右臂</option></select></label>
+      <label>关节<select id="real-joint" data-update="real"><option value="1">Joint 1</option><option value="2" selected>Joint 2</option><option value="3">Joint 3</option><option value="4">Joint 4</option><option value="5">Joint 5</option><option value="6">Joint 6</option></select></label>
+    </div>
+    <div id="real-chart" class="chart" data-label="真实回放某关节的目标与反馈"></div>
+    <p id="real-status" class="status" aria-live="polite"></p>
+    <p class="note"><a href="assets/signal-timing/replay-series.csv">下载数值 CSV</a> · <a href="assets/signal-timing/evidence.json">统计定义与来源哈希</a> · <a href="assets/signal-timing/replay-tracking.svg">六关节静态图</a></p>
+  </section>
+</div>
+<article id="report"><h1 id="_1">从手柄到策略：遥操信号、采样与时间契约</h1>
+<p><strong>阅读对象：</strong> 实验操作员、数据与模型研究人员、框架开发者。<br />
+<strong>证据范围：</strong> 当前本地源码、10 月 19 日三条采集审计、10 月 20 日三秒真机回放日志、原始论文。此次研究没有启动机器人或改变控制参数。</p>
+<p><a href="signal-timing-report.html">打开完整离线交互报告</a> · <a href="assets/signal-timing/evidence.json">真实数据与统计</a> · <a href="assets/signal-timing/replay-series.csv">CSV</a> · <a href="../plans/015-signal-timing-and-policy-research.md">实施计划</a></p>
+<blockquote>
+<p><strong>阅读提要</strong> 先读这五句话
+1. 物理运动近似连续；程序拿到的手柄和编码器反馈已经是离散、带噪声和延迟的观测。
+2. 手柄位姿、IK 目标、发出的关节命令、实际关节运动是不同变量，不能互相替代。
+3. 插值可以构造一条经过采样点的曲线；它既不自动恢复丢失的运动，也不保证机器人重走原轨迹。
+4. 训练时最重要的是动作语义和时间对应一致。Flow Matching 的“连续流”不等于连续时间机器人控制。
+5. 我们应保留多速率原始证据，再产生带明确时间规则的训练视图；采集、回放、推理共用执行面，但各自有不同的时序责任。</p>
+</blockquote>
+<h2 id="1">1. 先给每一种“信号”命名</h2>
+<p>用户所说的 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003C4;</mi><mrow><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub></mrow></math> 可以理解为手柄的整段轨迹。为避免与机器人动力学中的力矩 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003C4;</mi></mrow></math> 混淆，下文把它写作 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi mathvariant="script">T</mi><mi>h</mi></msub><mo>&#x0003D;</mo><mo stretchy="false">&#x0007B;</mo><msub><mi>T</mi><mi>h</mi></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo stretchy="false">&#x0007D;</mo></mrow></math>，其中 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>T</mi><mi>h</mi></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x02208;</mo><mi>S</mi><mi>E</mi><mo stretchy="false">&#x00028;</mo><mn>3</mn><mo stretchy="false">&#x00029;</mo></mrow></math> 是手柄位置与朝向。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>符号</th>
+<th>含义</th>
+<th>连续还是离散</th>
+<th>当前系统可观察到什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>T</mi><mi>h</mi></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></math></td>
+<td>真实手柄运动</td>
+<td>连续物理量</td>
+<td>没有无限精度的真值</td>
+</tr>
+<tr>
+<td><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mover><mi>T</mi><mo>&#x0007E;</mo></mover><mi>h</mi></msub><mo stretchy="false">[</mo><mi>n</mi><mo stretchy="false">]</mo></mrow></math></td>
+<td>WebXR 估计的位姿</td>
+<td>离散</td>
+<td>grip position、quaternion、浏览器时间、frame 序号</td>
+</tr>
+<tr>
+<td><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>T</mi><mi>d</mi></msub><mo stretchy="false">[</mo><mi>k</mi><mo stretchy="false">]</mo></mrow></math></td>
+<td>映射后的末端目标</td>
+<td>离散</td>
+<td><code>intent</code>，包括目标、seed、token、输入 seq</td>
+</tr>
+<tr>
+<td><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>q</mi><mrow><mrow><mi mathvariant="normal">I</mi><mi mathvariant="normal">K</mi></mrow></mrow></msub><mo stretchy="false">[</mo><mi>k</mi><mo stretchy="false">]</mo></mrow></math></td>
+<td>IK 求出的关节位置</td>
+<td>离散</td>
+<td><code>motion_result</code>、求解耗时、残差、是否接受</td>
+</tr>
+<tr>
+<td><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>u</mi><mi>q</mi></msub><mo stretchy="false">[</mo><mi>j</mi><mo stretchy="false">]</mo><mo>&#x0002C;</mo><msub><mi>u</mi><mi>g</mi></msub><mo stretchy="false">[</mo><mi>j</mi><mo stretchy="false">]</mo></mrow></math></td>
+<td>发往驱动的关节与夹爪目标</td>
+<td>离散更新、目标保持</td>
+<td><code>command</code>、guard、receipt</td>
+</tr>
+<tr>
+<td><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>q</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><mi>g</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></math></td>
+<td>实际关节角、实际夹爪开度</td>
+<td>连续物理量</td>
+<td>只能由反馈近似观测</td>
+</tr>
+<tr>
+<td><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>y</mi><mi>q</mi></msub><mo stretchy="false">[</mo><mi>m</mi><mo stretchy="false">]</mo><mo>&#x0002C;</mo><msub><mi>y</mi><mi>g</mi></msub><mo stretchy="false">[</mo><mi>m</mi><mo stretchy="false">]</mo></mrow></math></td>
+<td>编码器/SDK/ROS 反馈</td>
+<td>离散</td>
+<td>feedback 和来源/接收时间</td>
+</tr>
+<tr>
+<td><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>D</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">w</mi></mrow></mrow></msub></mrow></math></td>
+<td>原始事件、图像和索引集合</td>
+<td>多速率、不规则</td>
+<td>MCAP、MP4、JSONL</td>
+</tr>
+<tr>
+<td><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>D</mi><mrow><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></mrow></msub><mo stretchy="false">[</mo><mi>i</mi><mo stretchy="false">]</mo></mrow></math></td>
+<td>训练样本</td>
+<td>统一网格或显式不规则时间</td>
+<td>当前 <code>training-view</code> 是固定网格 JSONL，尚非完整 LeRobot v3</td>
+</tr>
+</tbody>
+</table></div>
+<p>WebXR 提供的是某一 XRFrame 的跟踪状态估计，并有预测显示时刻语义，不能把它视作直接访问连续 IMU 真值。当前网页记录 <code>xr_frame_time_ms</code> 和 <code>performance.now()</code>；未单独记录 <code>predictedDisplayTime</code>，也没有校准 PICO 跟踪管线的延迟。<a href="https://www.w3.org/TR/2026/CRD-webxr-20260609/">W3C WebXR 规范 §4–5、§9</a></p>
+<div class="flow" aria-label="信号处理链"><span>手柄 / XRFrame</span><b>→</b><span>网络 / 映射</span><b>→</b><span>异步 IK</span><b>→</b><span>目标 / 网关</span><b>→</b><span>驱动 / 实际运动</span><b>→</b><span>反馈 / 多速率记录</span></div>
+
+<p>这个图描述逻辑关系。反馈经过采样，IK 有队列和计算延迟，不是无延时的代数环。视觉预览还有“相机→编码/传输→显示→人类反应→手柄”的人机闭环；预览延迟即使不降低原始录制 FPS，也会改变示范者的行为。</p>
+<h2 id="2-hz">2. 我们现在究竟以多少 Hz 工作</h2>
+<h3 id="21-fps">2.1 一张频率表比一个 FPS 更有用</h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>层</th>
+<th>当前实现/配置</th>
+<th>正确解读</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PICO 跟踪内部更新</td>
+<td>未知</td>
+<td>不由网页 FPS 推断</td>
+</tr>
+<tr>
+<td>浏览器取位姿</td>
+<td>XR 渲染回调</td>
+<td>受头显、渲染负载、可见性影响；不是承诺的固定频率</td>
+</tr>
+<tr>
+<td>位姿提交</td>
+<td>通常间隔至少 33 ms；关键按键边沿可提前</td>
+<td>约 30 Hz 提交上限，需考虑回调量化</td>
+</tr>
+<tr>
+<td>控制网络</td>
+<td>一个请求在途；等待 ACK；普通位姿只保留最新一条</td>
+<td>RTT 大时提交样本会被替换；边沿队列与位姿策略不同</td>
+</tr>
+<tr>
+<td>遥操控制线程</td>
+<td><code>session.control_hz=60</code></td>
+<td>当前是 <code>tick()</code> 后再等 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mn>1</mn><mo>&#x0002F;</mo><mn>60</mn></mrow></math> 秒，周期包含工作耗时，实际低于或接近 60 Hz</td>
+</tr>
+<tr>
+<td>IK</td>
+<td>每臂独立进程，最新请求覆盖等待请求</td>
+<td>无新输入不重新求解；不是每 tick 必有新解</td>
+</tr>
+<tr>
+<td>关节发布</td>
+<td>活跃侧按控制 tick 发布最近接受目标</td>
+<td>重复同一个目标不增加新的运动信息</td>
+</tr>
+<tr>
+<td>驱动反馈发布</td>
+<td>每轮工作后等待 5 ms</td>
+<td>名义上限约 200 Hz；不是硬件内部伺服频率</td>
+</tr>
+<tr>
+<td>真实回放控制</td>
+<td>本轮实测约 60 Hz</td>
+<td>与遥操线程的循环机制不同，不能用回放实测替代遥操实测</td>
+</tr>
+<tr>
+<td>三相机捕获/原始 RGB</td>
+<td>配置 640×480、30 FPS</td>
+<td>每流分别检查帧间隔；已有三集无 depth</td>
+</tr>
+<tr>
+<td>VR 预览</td>
+<td>独立缩放和拥塞降频</td>
+<td>不等于记录 FPS；共享 CPU/网络资源仍可能相互影响</td>
+</tr>
+<tr>
+<td>原始状态/命令记录</td>
+<td>事件到达即入队，异步写盘</td>
+<td>没有统一“只按 30 Hz 保存所有信号”</td>
+</tr>
+<tr>
+<td>当前训练示例</td>
+<td>30 Hz，action offset 一步</td>
+<td>是离线视图规则，不是硬件频率或经标定的延迟补偿</td>
+</tr>
+</tbody>
+</table></div>
+<p>源码：<a href="../src/robot_infra/web/xr-session.js">网页采样</a>、<a href="../src/robot_infra/web/xr-transport.js">传输</a>、<a href="../src/robot_infra/teleop_session.py">遥操循环</a>、<a href="../src/robot_infra/solver_worker.py">IK worker</a>、<a href="../src/robot_infra/adapters/piper_driver.py">驱动缓存发布</a>、<a href="../src/robot_infra/real_episode.py">记录</a>、<a href="../src/robot_infra/training_view.py">训练视图</a>。</p>
+<h3 id="22-ack">2.2 一个容易忽视的瓶颈：等待 ACK</h3>
+<p>在持续发送、单请求在途的近似下，网络交付能力满足：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>f</mi><mrow><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">v</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mo>&#x02272;</mo><mo>min</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>f</mi><mrow><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mo>&#x0002C;</mo><mfrac><mrow><mn>1</mn></mrow><mrow><msub><mi>L</mi><mrow><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">T</mi><mi mathvariant="normal">T</mi></mrow></mrow></msub></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002E;</mo></mrow></math></div>
+<p>这不是所有网络系统的定律，而是<strong>当前 stop-and-wait 实现的上界估算</strong>。若一次往返花 100 ms，就算页面准备了 30 份位姿，每秒能完成的请求也约为 10 份；剩余普通位姿被最新值替换。好处是不会把旧手柄动作排成长队，代价是轨迹细节减少、更新不均匀。WebSocket 本身不要求每帧等待应用 ACK，这属于我们的传输设计。</p>
+<p>10 月 19 日的已保存审计，输入事件数除以 episode 时长如下。它们不是严格等间距采样率，也不是只针对侧握有效期间的统计：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Episode</th>
+<th style="text-align: right;">输入事件/秒</th>
+<th style="text-align: right;">接收间隔 p95 / 最大值</th>
+<th style="text-align: right;">RTT 中位 / p95 / 最大值</th>
+<th>采集 QC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td style="text-align: right;">20.99</td>
+<td style="text-align: right;">119.38 / 187.14 ms</td>
+<td style="text-align: right;">13 / 89.3 / 165.9 ms</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>1</td>
+<td style="text-align: right;">14.45</td>
+<td style="text-align: right;">206.75 / 538.85 ms</td>
+<td style="text-align: right;">21.5 / 191.3 / 557.7 ms</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>2</td>
+<td style="text-align: right;">17.42</td>
+<td style="text-align: right;">150.28 / 305.31 ms</td>
+<td style="text-align: right;">19.8 / 138.3 / 271 ms</td>
+<td>固定相机间隙失败</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>QC 通过不等于高动态训练质量通过。</strong> 第 1 集最大输入间隔超过半秒，但已有采集 QC 并不把所有控制质量因素列为失败条件。第 2 集的固定 RGB 间隙 197.477 ms 是另一条证据，不能把它和 RTT 峰值合并成一个已证实根因。<a href="research/2026-10-19-new-test-audit.md">原始审计解释</a></p>
+<p><code>previous_rtt_ms</code> 描述上一条请求，包含网络与服务处理等时间，不是当前帧的单向传输时间。没有共同时间基准时不能直接用“机器人时间−浏览器时间”计算延迟，更不能无条件把 RTT/2 当真实单向延迟。</p>
+<p>还有一个待测试的细节：网页当前把 A、X、侧握阈值变化放入边沿队列，<strong>扳机的模拟量变化不在这个 signature 中</strong>。它随可替换位姿包传输。快速按下又松开、恰好发生在长 RTT 期间时，中间开口意图可能没有送到服务器；这是源码推导的风险，不能据此认定之前某一次放物失败的原因。后续应专门注入网络延迟测试扳机脉冲，而非只测 A 键。</p>
+<h2 id="3-ik">3. IK 不是一根透明的线</h2>
+<h3 id="31">3.1 坐标映射和离合使轨迹具有分段语义</h3>
+<p>在某次侧握开始时保存手柄锚点 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x00028;</mo><msub><mi>p</mi><mrow><mi>h</mi><mn>0</mn></mrow></msub><mo>&#x0002C;</mo><msub><mi>R</mi><mrow><mi>h</mi><mn>0</mn></mrow></msub><mo stretchy="false">&#x00029;</mo></mrow></math> 与机械臂末端锚点 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x00028;</mo><msub><mi>p</mi><mrow><mi>r</mi><mn>0</mn></mrow></msub><mo>&#x0002C;</mo><msub><mi>R</mi><mrow><mi>r</mi><mn>0</mn></mrow></msub><mo stretchy="false">&#x00029;</mo></mrow></math>。位置映射可写为：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>p</mi><mi>d</mi></msub><mo stretchy="false">[</mo><mi>k</mi><mo stretchy="false">]</mo><mo>&#x0003D;</mo><msub><mi>p</mi><mrow><mi>r</mi><mn>0</mn></mrow></msub><mo>&#x0002B;</mo><mi>s</mi><mi>A</mi><mo stretchy="true" fence="true" minsize="1.2em" maxsize="1.2em">(</mo><msub><mover><mi>p</mi><mo>&#x0007E;</mo></mover><mi>h</mi></msub><mo stretchy="false">[</mo><mi>k</mi><mo stretchy="false">]</mo><mo>&#x02212;</mo><msub><mi>p</mi><mrow><mi>h</mi><mn>0</mn></mrow></msub><mo stretchy="true" fence="true" minsize="1.2em" maxsize="1.2em">)</mo><mo>&#x0002E;</mo></mrow></math></div>
+<p><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>A</mi></mrow></math> 是已声明的坐标轴映射，<math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>s</mi></mrow></math> 是位移比例。松开再握住会创建新锚点，因此不能把整个 episode 的手柄绝对坐标直接当机器人绝对目标。旋转要按照既定 frame 与乘法顺序组合，不能把欧拉角三分量随意相减。<a href="../src/robot_infra/pinocchio_model.py">相对映射实现</a></p>
+<h3 id="32-ik">3.2 当前 IK 实际求的是一个折中</h3>
+<p>把当前代码的残差平方和写出来：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msubsup><mi>q</mi><mi>k</mi><mo>&#x022C6;</mo></msubsup><mo>&#x0003D;</mo><munder><mrow><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">g</mi><mspace width="0.167em" /><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></mrow><mrow><msub><mi>q</mi><mrow><mo>min</mo></mrow></msub><mo>&#x02264;</mo><mi>q</mi><mo>&#x02264;</mo><msub><mi>q</mi><mrow><mo>max</mo></mrow></msub></mrow></munder><msup><mrow><mo stretchy="true" fence="true" form="prefix">&#x02016;</mo><mi>W</mi><mi>log</mi><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mi>T</mi><mo stretchy="false">&#x00028;</mo><mi>q</mi><msup><mo stretchy="false">&#x00029;</mo><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup><msub><mi>T</mi><mi>d</mi></msub><mo stretchy="false">[</mo><mi>k</mi><mo stretchy="false">]</mo><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo stretchy="true" fence="true" form="postfix">&#x02016;</mo></mrow><mn>2</mn></msup><mo>&#x0002B;</mo><msub><mi>&#x003BB;</mi><mi>s</mi></msub><mo fence="false" stretchy="false">&#x02016;</mo><mi>q</mi><mo>&#x02212;</mo><msub><mi>q</mi><mrow><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><msup><mo fence="false" stretchy="false">&#x02016;</mo><mn>2</mn></msup><mo>&#x0002B;</mo><msub><mi>&#x003BB;</mi><mi>p</mi></msub><mo fence="false" stretchy="false">&#x02016;</mo><mi>q</mi><msup><mo fence="false" stretchy="false">&#x02016;</mo><mn>2</mn></msup><mo>&#x0002E;</mo></mrow></math></div>
+<p>这里 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>W</mi></mrow></math> 的位置权重为 20、朝向权重为 2；代码先乘权重再平方，因此对应平方目标的系数分别是 400 和 4，<strong>不是 20 和 2</strong>。smooth 权重为 2，posture 为 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mn>5</mn></mrow></msup></mrow></math>。这些权重也受 m/rad 单位选择影响，不是普适物理常数。</p>
+<p>主线程给请求附上最近反馈作为 seed，但 <strong>worker 在同一侧握 token 内优先使用上一次接受的 IK 解</strong>；首次或 token 变化时才使用请求里的反馈 seed。这样更有利于解的连续性，也意味着平滑项围绕的是求解历史，未必是当前物理位置。<code>allow_best_effort=true</code> 时，有限且未完全收敛的解也可能被接受；当前收敛判据是位置残差 &lt;3 mm、朝向残差 &lt;0.03 rad。求解接受不表示物理到达。实际配置的 <code>ik.deadline_ms=50</code> 与结果年龄 0.3 s 是不同概念：前者约束求解过程检查，后者限制使用旧结果；Python/操作系统调度仍非硬实时。<a href="../src/robot_infra/solver_worker.py">worker 的 seed 选择</a></p>
+<p>教材中的微分形式 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mover><mi>x</mi><mo>&#x002D9;</mo></mover><mo>&#x0003D;</mo><mi>J</mi><mo stretchy="false">&#x00028;</mo><mi>q</mi><mo stretchy="false">&#x00029;</mo><mover><mi>q</mi><mo>&#x002D9;</mo></mover></mrow></math> 说明：接近奇异位形时，小的末端变化可能要求很大的关节变化；解还依赖起始值、约束与可达性。当前代码使用 Pinocchio 的几何/Jacobian 和 SciPy 有界最小二乘，<strong>没有把教科书伪逆直接当作当前控制器</strong>。<a href="https://modernrobotics.northwestern.edu/nu-gm-book-resource/6-2-numerical-inverse-kinematics-part-1-of-2/">Modern Robotics：数值 IK</a></p>
+<p>工程后果是：提高 IK 调用次数不一定改善跟手。如果输入陈旧、目标不可达、反馈滞后或平滑权重过大，重复求解也不能还原手柄运动。应同时检查目标年龄、残差、解的连续性、执行偏差，而不是只看求解耗时。</p>
+<p>当前 worker 的发送和结果接收都由控制 tick 中的 <code>poll()</code> 推动：主线程本 tick 创建的新请求，通常要到后续 poll 才进入进程；求解完成后也要等 poll 被读取。因此“IK 算了 1.3 ms”不等于“目标 1.3 ms 后已发布”。计算时间之外还有等待、进程传输和结果消费延迟。记录的 <code>created_s</code> 在机器人主机生成，其结果年龄并不包含此前头显跟踪与网络的全部年龄。</p>
+<h2 id="4">4. 离散轨迹能恢复连续运动吗</h2>
+<h3 id="41">4.1 数学上：有条件地能；实际中：通常只能近似</h3>
+<p>对标量轨迹 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>x</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></math>，若它严格带限到 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>B</mi></mrow></math> Hz，等间距、无噪声采样满足 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>f</mi><mi>s</mi></msub><mo>&#x0003E;</mo><mn>2</mn><mi>B</mi></mrow></math>，且有无限样本和理想重建，则：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>x</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><munderover><mo>&#x02211;</mo><mrow><mi>n</mi><mo>&#x0003D;</mo><mo>&#x02212;</mo><mo>&#x0221E;</mo></mrow><mrow><mo>&#x0221E;</mo></mrow></munderover><mi>x</mi><mo stretchy="false">[</mo><mi>n</mi><mo stretchy="false">]</mo><mspace width="0.167em" /><mo>sinc</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mfrac><mrow><mi>t</mi><mo>&#x02212;</mo><mi>n</mi><msub><mi>T</mi><mi>s</mi></msub></mrow><mrow><msub><mi>T</mi><mi>s</mi></msub></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002C;</mo><mspace width="2em" /><mo>sinc</mo><mo stretchy="false">&#x00028;</mo><mi>z</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mfrac><mrow><mi>sin</mi><mo stretchy="false">&#x00028;</mo><mi>&#x003C0;</mi><mi>z</mi><mo stretchy="false">&#x00029;</mo></mrow><mrow><mi>&#x003C0;</mi><mi>z</mi></mrow></mfrac><mo>&#x0002E;</mo></mrow></math></div>
+<p>这是采样定理的理想结论；“连续”本身并不蕴含“带限”。抓取接触、启停、夹爪切换、跟踪跳变、有限 episode 边缘都使条件复杂化。<a href="https://ocw.mit.edu/courses/hst-582j-biomedical-signal-and-image-processing-spring-2007/54ae74896b15e34e9e7fea0d94c17777_ch5_samp.pdf">MIT 采样定理讲义</a></p>
+<p>一个严格反例：<math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>x</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></math> 与 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>x</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><mi>a</mi><mi>sin</mi><mo stretchy="false">&#x00028;</mo><mn>2</mn><mi>&#x003C0;</mi><msub><mi>f</mi><mi>s</mi></msub><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></math> 在所有 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>t</mi><mo>&#x0003D;</mo><mi>n</mi><mo>&#x0002F;</mo><msub><mi>f</mi><mi>s</mi></msub></mrow></math> 上数值相同，却在样本之间走了不同路径。没有带宽等额外假设，保存下来的点不可能唯一确定真实连续轨迹。这也解释为什么“曲线看起来很平滑”不能证明恢复正确。</p>
+<p><strong>交互实验 A</strong> 可将输入设为 18 Hz、采样设为 30 Hz。样本无法区分该正弦与相位反向的 12 Hz 正弦；换成 60 Hz 才排除这组混叠。实验中的折叠正弦是解析别名示例，不是通用重建算法。<a href="https://ocw.mit.edu/courses/res-6-007-signals-and-systems-spring-2011/resources/lecture-16-sampling/">MIT：混叠与重建</a></p>
+<h3 id="42">4.2 常见插值方法分别承诺什么</h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>方法</th>
+<th>适用语义</th>
+<th>保留了什么</th>
+<th>不能保证什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>零阶保持 ZOH</td>
+<td>最近命令持续有效；因果状态快照</td>
+<td>采样/事件值及保持语义</td>
+<td>不保证速度连续；不补丢帧</td>
+</tr>
+<tr>
+<td>线性插值</td>
+<td>离线描述平滑位置或已知未来轨迹</td>
+<td>经过相邻位置点</td>
+<td>速度分段跳变；在线不能偷看未来反馈</td>
+</tr>
+<tr>
+<td>三次样条 / Hermite</td>
+<td>显式轨迹生成</td>
+<td>可增加导数连续性</td>
+<td>可能过冲；需验证限位、速度与加速度</td>
+</tr>
+<tr>
+<td>sinc</td>
+<td>理想带限重建</td>
+<td>理论上恢复带限信号</td>
+<td>有限/不规则/噪声实测不满足理想前提</td>
+</tr>
+<tr>
+<td>SO(3)/SE(3) 插值</td>
+<td>朝向/末端轨迹</td>
+<td>正确处理几何约束</td>
+<td>不等于插值关节，也不保证中间可达</td>
+</tr>
+</tbody>
+</table></div>
+<p>以下是用于量级判断的推导，不是硬件认证指标。若标量 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>x</mi></mrow></math> 在区间内二次可微且 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x0007C;</mo><msup><mi>x</mi><mi>&#x02033;</mi></msup><mo stretchy="false">&#x0007C;</mo><mo>&#x02264;</mo><mi>M</mi></mrow></math>，线性插值的最大误差满足：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mo stretchy="false">&#x0007C;</mo><mi>x</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x02212;</mo><msub><mover><mi>x</mi><mo>&#x0005E;</mo></mover><mrow><mrow><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></mrow></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo stretchy="false">&#x0007C;</mo><mo>&#x02264;</mo><mfrac><mrow><mi>M</mi><msubsup><mi>T</mi><mi>s</mi><mn>2</mn></msubsup></mrow><mrow><mn>8</mn></mrow></mfrac><mo>&#x0002E;</mo></mrow></math></div>
+<p>它来自线性插值余项 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mfrac><mrow><msup><mi>x</mi><mi>&#x02033;</mi></msup><mo stretchy="false">&#x00028;</mo><mi>&#x003BE;</mi><mo stretchy="false">&#x00029;</mo></mrow><mn>2</mn></mfrac><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo>&#x02212;</mo><msub><mi>t</mi><mi>n</mi></msub><mo stretchy="false">&#x00029;</mo><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo>&#x02212;</mo><msub><mi>t</mi><mrow><mi>n</mi><mo>&#x0002B;</mo><mn>1</mn></mrow></msub><mo stretchy="false">&#x00029;</mo></mrow></math>。若 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>M</mi><mo>&#x0003D;</mo><mn>2</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mo>&#x0002F;</mo><msup><mi mathvariant="normal">s</mi><mn>2</mn></msup></mrow></mrow></math>，30 Hz 时上界约 0.000278 rad；但 197 ms 空洞对应约 0.00970 rad。<strong>这个例子只在假定加速度界成立时有效</strong>，不是对缺失图像内容或我们的真实误差的估计。</p>
+<p>零阶保持的归一化频率响应为：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>H</mi><mrow><mrow><mi mathvariant="normal">Z</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo stretchy="false">&#x00028;</mo><mi>j</mi><mi>&#x003C9;</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><msup><mi>e</mi><mrow><mo>&#x02212;</mo><mi>j</mi><mi>&#x003C9;</mi><msub><mi>T</mi><mi>s</mi></msub><mo>&#x0002F;</mo><mn>2</mn></mrow></msup><mfrac><mrow><mi>sin</mi><mo stretchy="false">&#x00028;</mo><mi>&#x003C9;</mi><msub><mi>T</mi><mi>s</mi></msub><mo>&#x0002F;</mo><mn>2</mn><mo stretchy="false">&#x00029;</mo></mrow><mrow><mi>&#x003C9;</mi><msub><mi>T</mi><mi>s</mi></msub><mo>&#x0002F;</mo><mn>2</mn></mrow></mfrac><mo>&#x0002E;</mo></mrow></math></div>
+<p>可直接对长度 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>T</mi><mi>s</mi></msub></mrow></math> 的矩形保持核做傅里叶变换得到。对低频分量，它带来约半个周期的相位延迟和幅值衰减；提高发送频率能减小保持效应，但不能抵消旧输入的年龄。</p>
+<h3 id="43">4.3 还要区分“重建曲线”和“重现物理运动”</h3>
+<p>实际运动大致满足：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>M</mi><mo stretchy="false">&#x00028;</mo><mi>q</mi><mo stretchy="false">&#x00029;</mo><mover><mi>q</mi><mo>&#x000A8;</mo></mover><mo>&#x0002B;</mo><mi>C</mi><mo stretchy="false">&#x00028;</mo><mi>q</mi><mo>&#x0002C;</mo><mover><mi>q</mi><mo>&#x002D9;</mo></mover><mo stretchy="false">&#x00029;</mo><mover><mi>q</mi><mo>&#x002D9;</mo></mover><mo>&#x0002B;</mo><mi>g</mi><mo stretchy="false">&#x00028;</mo><mi>q</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><mi>f</mi><mo stretchy="false">&#x00028;</mo><mover><mi>q</mi><mo>&#x002D9;</mo></mover><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><msub><mi>&#x003C4;</mi><mrow><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub><mo>&#x0002B;</mo><mi>J</mi><mo stretchy="false">&#x00028;</mo><mi>q</mi><msup><mo stretchy="false">&#x00029;</mo><mo>&#x022A4;</mo></msup><msub><mi>F</mi><mrow><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow></mrow></msub><mo>&#x0002E;</mo></mrow></math></div>
+<p>发送的是目标位置，而不是上式所有力矩、外力、摩擦和内部状态。驱动的闭环控制、速度配置、负载、接触、温度和初始条件都会影响 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>q</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></math>。这个动力学表达用于说明缺失变量，当前系统未辨识这些参数。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>想恢复的对象</th>
+<th>判断</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>保存文件里的数值、时间戳</td>
+<td>可用 hash/完整性校验精确验证</td>
+</tr>
+<tr>
+<td>经过反馈采样点的一条连续曲线</td>
+<td>可以构造，但通常不唯一</td>
+</tr>
+<tr>
+<td>当时发布的目标序列</td>
+<td>有命令与 receipt 证据时可以恢复；receipt 只证明 publish 返回</td>
+</tr>
+<tr>
+<td>当时每一个硬件内部控制动作</td>
+<td>当前没有此完整观测</td>
+</tr>
+<tr>
+<td>相同目标驱动机器人后得到完全相同的实际运动</td>
+<td>一般不能保证，需要闭环跟踪评测</td>
+</tr>
+<tr>
+<td>从实际开度反推出夹爪闭合意图/接触力</td>
+<td>一般不唯一，不能据此替代命令标签</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="5">5. 真机回放给了我们什么证据</h2>
+<p><img alt="真实三秒回放六关节目标与反馈" src="assets/signal-timing/replay-tracking.svg" /></p>
+<p>上图仅比较<strong>这次回放内部的发布目标与收到的反馈</strong>，不是“原始示范实际运动 vs 回放实际运动”的逐点精度对照。当前提取器没有原示范的完整反馈时序；因此没有报告轨迹复现误差。</p>
+<p>统计窗口为 <code>RUNNING ≤ host time &lt; COMPLETED</code>，持续 3.000911466 s，排除回位和停止保持。命令时间取对应 publish receipt，反馈取 host event 时间；误差用每份反馈之前最近的已发布目标计算，不做时间平移拟合。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>指标</th>
+<th style="text-align: right;">左臂</th>
+<th style="text-align: right;">右臂</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>发布关节目标数</td>
+<td style="text-align: right;">179</td>
+<td style="text-align: right;">179</td>
+</tr>
+<tr>
+<td>发布间隔估计频率 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x00028;</mo><mi>N</mi><mo>&#x02212;</mo><mn>1</mn><mo stretchy="false">&#x00029;</mo><mo>&#x0002F;</mo><mo stretchy="false">&#x00028;</mo><msub><mi>t</mi><mi>N</mi></msub><mo>&#x02212;</mo><msub><mi>t</mi><mn>1</mn></msub><mo stretchy="false">&#x00029;</mo></mrow></math></td>
+<td style="text-align: right;">59.991 Hz</td>
+<td style="text-align: right;">59.992 Hz</td>
+</tr>
+<tr>
+<td>发布间隔 p95 / 最大值</td>
+<td style="text-align: right;">17.736 / 18.614 ms</td>
+<td style="text-align: right;">17.821 / 18.729 ms</td>
+</tr>
+<tr>
+<td>连续不同的关节目标组数</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">25</td>
+</tr>
+<tr>
+<td>反馈数 / 时间跨度估计频率</td>
+<td style="text-align: right;">508 / 169.209 Hz</td>
+<td style="text-align: right;">508 / 169.062 Hz</td>
+</tr>
+<tr>
+<td>第二关节反馈时刻采样加权 RMSE</td>
+<td style="text-align: right;">0.044759 rad</td>
+<td style="text-align: right;">0.035850 rad</td>
+</tr>
+<tr>
+<td>第二关节最大瞬时绝对误差</td>
+<td style="text-align: right;">0.133983 rad</td>
+<td style="text-align: right;">0.105296 rad</td>
+</tr>
+</tbody>
+</table></div>
+<p>每臂 505 份反馈有窗口内前序目标可配对，另 3 份未配对。RMSE 是这些点的等权统计，不是连续时间积分误差，也没有补偿反馈链延迟。目标数量含静止段，不能据此说有效手部带宽就是 25/3 Hz。508 个不同 SDK 时间戳也不足以证明每次都是独立硬件采样。</p>
+<p>现场已确认正常运动并停止。驱动速度配置 20%，但不能仅凭这个数断言误差都由速度限制造成。本轮结束立即执行已验证停止流程，没有等待最后轨迹目标完全收敛；旧报告的结束截面误差与本报告的全窗口最大值不是同一个指标。</p>
+<p><strong>当前回放也不是逐条精确重播。</strong> <code>ReplaySource.sample()</code> 在 tick 时收集所有已经到期的源事件，更新到最新目标，然后发布一次；同一 tick 内的中间目标可能只留在 <code>source_progress</code> 而不逐个下发。它保留时间轴和最新有效目标语义，却不保证还原原始每条发送间隔。原生关节回放不重跑 IK，避免人为改变 IK 分支。<a href="../src/robot_infra/workflow.py">回放源码</a></p>
+<p>要验收“复现”，下一轮应同时比较原示范与回放的命令、反馈、统一时间原点、相同初始状态和驱动配置。建议报告不平移误差、显式允许延迟后的误差、速度/加速度、夹爪事件时差、最终任务结果；不要只用动态时间规整把时序差异藏起来。</p>
+<h2 id="6">6. 采样、延迟、抖动如何共同决定质量</h2>
+<h3 id="61">6.1 频率高，不等于信息新</h3>
+<p>实际可学习信息受整条链最弱环节影响。将每秒 10 个新手柄目标重复发布 60 次，再记录 200 份反馈，确实能观察执行动态，却不会获得 200 个独立的人类决策。反之，低频存盘会丢掉高频命令/响应细节。</p>
+<p>应分别统计：</p>
+<ul>
+<li><strong>速率与间隙：</strong> count、跨度速率、间隔 p50/p95/p99/max；每流独立统计。</li>
+<li><strong>年龄与时钟：</strong> observation age、intent age、IK result age、时钟域/偏移不确定性。</li>
+<li><strong>新鲜程度：</strong> 来源 frame ID、重复源时间戳、相邻目标变化、覆盖/丢弃计数。</li>
+<li><strong>运动质量：</strong> IK 残差、目标与反馈误差、速度/加速度、夹爪事件和两臂相对时序。</li>
+<li><strong>可训练性：</strong> 标签来源、动作 mask、成功/失败标注、任务覆盖，而不只是文件可解码。</li>
+</ul>
+<p>平均 30 FPS 的相机仍可能有局部大空洞；双臂各自平均频率正常，也可能一侧长期比另一侧迟到。双臂协作尤其需要记录同一控制 tick 的两侧发送偏差与观测年龄，而非只给一个平均 FPS。</p>
+<p>图像还有<strong>曝光时间窗口</strong>：一帧并非无穷短时刻的状态，快速运动可能模糊；滚动快门还可能令不同图像行对应不同时间。RGB 与 depth 也不能仅凭相同 FPS 就认为同步。后续应核验各流时间戳代表曝光开始、中点、设备处理完成还是 SDK 接收，并记录实际曝光、源 frame ID、RGB/depth 对齐方法及相机间偏差；当前资料不足以替所有相机确认这些语义。</p>
+<p>RealSense SDK 提供了帧时间域与 metadata 查询接口，后续审计应按实际设备支持的字段读取，不能只看 ROS header。<a href="https://github.com/realsenseai/librealsense/blob/master/include/librealsense2/h/rs_frame.h">官方帧接口定义</a></p>
+<h3 id="62">6.2 一个简单的时间错位误差模型</h3>
+<p>对于小时间误差 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003B4;</mi><mi>t</mi></mrow></math>：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>q</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo>&#x0002B;</mo><mi>&#x003B4;</mi><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x02212;</mo><mi>q</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x02248;</mo><mover><mi>q</mi><mo>&#x002D9;</mo></mover><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mi>&#x003B4;</mi><mi>t</mi><mo>&#x0002C;</mo><mspace width="2em" /><mo stretchy="false">&#x0007C;</mo><mi>&#x003B4;</mi><mi>q</mi><mo stretchy="false">&#x0007C;</mo><mo>&#x02272;</mo><msub><mi>v</mi><mrow><mo>max</mo></mrow></msub><mo stretchy="false">&#x0007C;</mo><mi>&#x003B4;</mi><mi>t</mi><mo stretchy="false">&#x0007C;</mo><mo>&#x0002E;</mo></mrow></math></div>
+<p>若某关节以 1 rad/s 运动，100 ms 错位约对应 0.1 rad；动作很慢时同样延迟可能不明显。这是泰勒展开的量级估计。高动态任务的质量阈值必须和运动速度关联，不能全靠固定 FPS。</p>
+<p>随机采样抖动同样产生近似误差 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003B4;</mi><mi>x</mi><mo>&#x02248;</mo><mover><mi>x</mi><mo>&#x002D9;</mo></mover><mspace width="0.167em" /><mi>&#x003F5;</mi></mrow></math>。已知时间戳可以正确放置不规则样本，却不能补回未采样的细节。更密的数值微分还会放大噪声：独立位置噪声标准差为 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003C3;</mi></mrow></math> 时，相邻差分速度噪声标准差约 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msqrt><mn>2</mn></msqrt><mi>&#x003C3;</mi><mo>&#x0002F;</mo><msub><mi>T</mi><mi>s</mi></msub></mrow></math>。因此不要直接用原始差分的 jerk 评判硬件抖动，须声明滤波及时间基准。</p>
+<h3 id="63">6.3 记录频率和训练频率应解耦</h3>
+<p>当前策略是合理的起点：原始事件保留，写盘在独立线程，训练视图后生成。编码/磁盘慢造成的排队与丢弃必须可观测，写入时刻不能冒充采样时刻。MP4 帧号/PTS 是视频时间表示；图像选择应追溯逐帧索引，不以 <code>frame_index/30</code> 抹去原始间隙。</p>
+<p>降低<strong>状态信号</strong>采样率前应考虑抗混叠低通，再重采样；滤波参数、因果性、群延迟必须记入训练版本。离线零相位滤波会使用未来数据，若把它当在线可见状态会造成训练/部署不一致。<strong>控制命令</strong>则要保留目标保持和事件语义，不能把开关夹爪、停止、接管一律当平滑信号。相机降帧也不是对图像简单低通后就能解决动作时序问题。</p>
+<p>当前 <code>RateGate</code> 在 record FPS 低于 capture FPS 时做接收时间门控，<strong>不是抗混叠滤波器</strong>；原生同 FPS 则保存收到的每帧。当前训练视图对状态/图像采用因果 latest，不是带低通的连续重建。<a href="../src/robot_infra/real_episode.py">记录源码</a>、<a href="https://ocw.mit.edu/courses/6-341-discrete-time-signal-processing-fall-2005/">多速率处理课程</a></p>
+<h2 id="7">7. 对训练：先定义标签，再讨论网络</h2>
+<h3 id="71-state-action">7.1 State 与 action 是不同角色</h3>
+<p>对本项目的位置目标接口，建议：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>o</mi><mi>i</mi></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msubsup><mi>I</mi><mi>i</mi><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>I</mi><mi>i</mi><mn>2</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>I</mi><mi>i</mi><mn>3</mn></msubsup><mo>&#x0002C;</mo><msub><mi>q</mi><mrow><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow><mo>&#x0002C;</mo><mi>i</mi></mrow></msub><mo>&#x0002C;</mo><msub><mi>g</mi><mrow><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow><mo>&#x0002C;</mo><mi>i</mi></mrow></msub><mo>&#x0002C;</mo><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">k</mi></mrow><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002C;</mo><mspace width="2em" /><msub><mi>a</mi><mi>i</mi></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>q</mi><mrow><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow><mo>&#x0002C;</mo><mi>i</mi></mrow></msub><mo>&#x0002C;</mo><msub><mi>g</mi><mrow><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow><mo>&#x0002C;</mo><mi>i</mi></mrow></msub><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002E;</mo></mrow></math></div>
+<p>双臂关节加夹爪组成 14 维动作，具体顺序和单位依 schema；可用深度时作为额外观测流，缺失不得伪造。相机与状态的取样时刻、action offset、有效性 mask 都是标签定义的一部分。</p>
+<p>夹住物体后，目标可能是 0 mm，而反馈停在 32 mm。如果用 32 mm 当“闭合命令”，推理时可能恰好停在物体外侧或接触处，不能表达继续闭合的意图。更适合当前接口的主标签是<strong>经过映射与最终检查、已发布的夹爪目标</strong>；原始扳机另存，实际开度作为状态。扳机可能在非遥操/未激活阶段变化，因此也不能无条件直接当动作标签。目标位置不等于夹持力，若未来要学力控，必须额外定义并采集相关量。</p>
+<p>当前 <code>training-view</code> 示例在 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>t</mi><mi>i</mi></msub></mrow></math> 选接收时间不晚于 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>t</mi><mi>i</mi></msub></mrow></math> 的观测，在 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>t</mi><mi>i</mi></msub><mo>&#x0002B;</mo><mi>&#x00394;</mi><mi>t</mi></mrow></math> 选最近已发布目标。这里一步偏移只是显式配置，<strong>尚未通过实验标定为最佳训练偏移</strong>。不能因为它叫“一步”就默认等于相机、IK、网络、驱动总延迟。<a href="training-data-format-report.md">训练数据报告</a></p>
+<p>另一个合理研究方向是“未来实际状态作为 waypoint 标签”，但这会改变问题定义：模型学的是未来到达状态，部署要有对应轨迹跟踪器和时序语义；不能悄悄替换当前 absolute target 标签。</p>
+<h3 id="72-flow-matching">7.2 Flow Matching 有两条完全不同的时间轴</h3>
+<p>物理时间是 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>t</mi><mi>i</mi></msub><mo>&#x0003D;</mo><mi>i</mi><mi>&#x00394;</mi><mi>t</mi></mrow></math>，用于定义动作发生在什么时候。将未来 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi></mrow></math> 个动作堆叠为 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>A</mi><mi>i</mi></msub><mo>&#x02208;</mo><msup><mi mathvariant="double-struck">R</mi><mrow><mi>N</mi><mo>&#x000D7;</mo><mi>d</mi></mrow></msup></mrow></math>。一个简化的线性条件流训练例子是：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>Z</mi><mi>s</mi></msub><mo>&#x0003D;</mo><mo stretchy="false">&#x00028;</mo><mn>1</mn><mo>&#x02212;</mo><mi>s</mi><mo stretchy="false">&#x00029;</mo><mi>&#x003F5;</mi><mo>&#x0002B;</mo><mi>s</mi><msub><mi>A</mi><mi>i</mi></msub><mo>&#x0002C;</mo><mspace width="1em" /><mi>&#x003F5;</mi><mi>&#x0007E;</mi><mi mathvariant="script">N</mi><mo stretchy="false">&#x00028;</mo><mn>0</mn><mo>&#x0002C;</mo><mi>I</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><mspace width="1em" /><mi>s</mi><mo>&#x02208;</mo><mo stretchy="false">[</mo><mn>0</mn><mo>&#x0002C;</mo><mn>1</mn><mo stretchy="false">]</mo><mo>&#x0002C;</mo></mrow></math></div>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi mathvariant="script">L</mi><mo>&#x0003D;</mo><mi mathvariant="double-struck">E</mi><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mrow><mo stretchy="true" fence="true" form="prefix">&#x02016;</mo><msub><mi>v</mi><mi>&#x003B8;</mi></msub><mo stretchy="false">&#x00028;</mo><msub><mi>Z</mi><mi>s</mi></msub><mo>&#x0002C;</mo><mi>s</mi><mo>&#x0002C;</mo><msub><mi>o</mi><mi>i</mi></msub><mo stretchy="false">&#x00029;</mo><mo>&#x02212;</mo><mo stretchy="false">&#x00028;</mo><msub><mi>A</mi><mi>i</mi></msub><mo>&#x02212;</mo><mi>&#x003F5;</mi><mo stretchy="false">&#x00029;</mo><mo stretchy="true" fence="true" form="postfix">&#x02016;</mo></mrow><mn>2</mn></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002E;</mo></mrow></math></div>
+<p>这里 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>s</mi></mrow></math> 是<strong>生成过程时间</strong>，并非机器人运动的秒数。生成时解 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>d</mi><msub><mi>Z</mi><mi>s</mi></msub><mo>&#x0002F;</mo><mi>d</mi><mi>s</mi><mo>&#x0003D;</mo><msub><mi>v</mi><mi>&#x003B8;</mi></msub></mrow></math> 得到整段动作数组；之后才由执行器按 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x00394;</mi><mi>t</mi></mrow></math> 执行。这是常见条件线性路径的教学表达，实际模型可用不同路径和噪声约定。<a href="https://arxiv.org/abs/2210.02747">Flow Matching 原论文</a></p>
+<p>因此，生成过程的 ODE 连续，并不约束最终数组沿动作索引 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>i</mi></mrow></math> 的速度、加速度、碰撞、IK 可达性或动态可执行性。减少去噪/积分步数可能降低推理延迟，同时改变生成质量，必须联合评估；它不会改变训练动作的物理周期。</p>
+<p>DiT 是以 Transformer 作为扩散模型骨干的设计，原论文主要针对图像；将其用于动作并不会自动解决对齐、采样或机器人动力学。网络结构、生成目标、动作表示、执行器是四项可独立选择的设计。<a href="https://arxiv.org/abs/2212.09748">DiT 原论文</a></p>
+<h3 id="73-hz">7.3 改变数据 Hz，其实改变了学习问题</h3>
+<p>固定 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math> 时，首末动作采样点跨度为 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x00028;</mo><mi>N</mi><mo>&#x02212;</mo><mn>1</mn><mo stretchy="false">&#x00029;</mo><mi>&#x00394;</mi><mi>t</mi></mrow></math>：30 Hz 是 0.5 s，10 Hz 是 1.5 s。若最后一个动作再保持一步，总覆盖时长是 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mi>&#x00394;</mi><mi>t</mi></mrow></math>；两种 horizon 定义要写清楚，不能混用。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>改动</th>
+<th>训练影响</th>
+<th>部署必须配套</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>30 Hz 数据直接每隔三帧取一帧</td>
+<td>更长物理 horizon，可能丢快速事件</td>
+<td>明确新 dt、重采样方法和 mask</td>
+</tr>
+<tr>
+<td>10 Hz 动作插值成 60 Hz</td>
+<td>更多点但无新独立示范信息</td>
+<td>声明插值器；不能当新控制带宽</td>
+</tr>
+<tr>
+<td>相同 delta-position 每秒执行次数翻倍</td>
+<td>累计位移/速度语义改变</td>
+<td>按 dt 转换或重训，不能只改定时器</td>
+</tr>
+<tr>
+<td>absolute-position 提前两倍播放</td>
+<td>路径点相同、时间尺度不同</td>
+<td>重新验证速度、跟踪与接触</td>
+</tr>
+<tr>
+<td>统一 q(rad) 与 jaw(m) 而不归一化</td>
+<td>损失各维权重失衡</td>
+<td>同一 normalization 版本</td>
+</tr>
+<tr>
+<td>训练跨丢帧/暂停/接管拼 chunk</td>
+<td>学到虚假跃迁或等待</td>
+<td>切段、mask；不跨 episode 边界拼接</td>
+</tr>
+</tbody>
+</table></div>
+<p>建议将相机刷新率、状态观测率、动作网格分别声明。模型可以以 30 Hz 动作运行而用较低频图像，但应显式告知图像年龄/重复帧语义，并与训练一致。</p>
+<h2 id="8-chunk-rtc">8. 对推理：chunk 解决计算吞吐，RTC 处理连续衔接</h2>
+<p>Diffusion Policy 将动作序列生成与 receding-horizon 执行结合。ACT 同样使用 action chunking，并引入对<strong>同一执行时刻</strong>的多次预测做 temporal ensembling。二者不是从少量采样点精确恢复连续物理运动的算法。<a href="https://diffusion-policy.cs.columbia.edu/">Diffusion Policy 官方论文入口</a>、<a href="https://www.roboticsproceedings.org/rss19/p016.pdf">ACT 原论文</a></p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>执行方案</th>
+<th>行为</th>
+<th>优点</th>
+<th>主要时序风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单步、无额外平滑</td>
+<td>每次预测一个目标</td>
+<td>语义简单</td>
+<td>推理耗时决定新目标频率；保持目标不等于高频闭环</td>
+</tr>
+<tr>
+<td>同步 chunk</td>
+<td>预测 N 步，执行 K 步后再算</td>
+<td>摊薄推理成本</td>
+<td>等待新 chunk 时停顿；长 K 降低反馈更新</td>
+</tr>
+<tr>
+<td>异步 chunk</td>
+<td>后台计算，设备侧按时间消费</td>
+<td>可覆盖推理等待</td>
+<td>chunk 边界不一致、过期、队列耗尽</td>
+</tr>
+<tr>
+<td>Temporal ensemble</td>
+<td>融合同一时刻的重叠预测</td>
+<td>可降低预测抖动</td>
+<td>旧预测权重带来滞后；多模态路线平均可能不可行</td>
+</tr>
+<tr>
+<td>RTC</td>
+<td>生成过程中以将执行前缀约束新 chunk</td>
+<td>衔接计划与异步执行</td>
+<td>需要模型采样器支持、正确前缀和时钟；不能修复网络失联</td>
+</tr>
+<tr>
+<td>轨迹插值/平滑</td>
+<td>动作输出后加工</td>
+<td>改善设定值连续性</td>
+<td>改变标签语义/时延；不是 RTC</td>
+</tr>
+<tr>
+<td>MPC</td>
+<td>基于动态模型滚动优化</td>
+<td>可显式考虑约束与反馈</td>
+<td>需要模型、状态估计和求解预算；不是“把 chunk 接起来”</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="81-chunk">8.1 用秒核算队列，不要只看 chunk 长度</h3>
+<p>假设 N 个动作，每个保持 <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x00394;</mi><mi>t</mi></mrow></math>；已执行 K 个时启动下一次推理，剩余覆盖时间为：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>T</mi><mrow><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mo stretchy="false">&#x00028;</mo><mi>N</mi><mo>&#x02212;</mo><mi>K</mi><mo stretchy="false">&#x00029;</mo><mi>&#x00394;</mi><mi>t</mi><mo>&#x0002C;</mo><mspace width="2em" /><msub><mi>T</mi><mrow><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub><mo>&#x02265;</mo><msub><mi>L</mi><mrow><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">e</mi><mo>&#x0002B;</mo><mi mathvariant="normal">t</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub><mo>&#x0002B;</mo><mi>M</mi><mo>&#x0002E;</mo></mrow></math></div>
+<p><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>M</mi></mrow></math> 是调度裕量。这个条件只说明已知确定延迟场景下不会断粮，<strong>不保证闭环响应及时</strong>。新动作依据的图像可能早已陈旧。真实部署应报告延迟分布与超时策略；p95 预算意味着仍可能有尾部超限。</p>
+<p>例如 N=16、30 Hz、K=8，缓冲 266.7 ms；若模型与传输 180 ms、裕量 40 ms，尚余 46.7 ms。若 K=14，缓冲只剩 66.7 ms，同样模型就来不及。交互实验 C 可直接调整这些值。</p>
+<p>Temporal ensemble 的一般形式是：</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mover><mi>a</mi><mo stretchy="true">&#x000AF;</mo></mover><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mfrac><mrow><msub><mo>&#x02211;</mo><mrow><mi>r</mi><mo>&#x02208;</mo><mi mathvariant="script">R</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></msub><msub><mi>w</mi><mi>r</mi></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><msup><mi>a</mi><mrow><mo stretchy="false">&#x00028;</mo><mi>r</mi><mo stretchy="false">&#x00029;</mo></mrow></msup><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow><mrow><msub><mo>&#x02211;</mo><mrow><mi>r</mi><mo>&#x02208;</mo><mi mathvariant="script">R</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></msub><msub><mi>w</mi><mi>r</mi></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></mfrac><mo>&#x0002E;</mo></mrow></math></div>
+<p>重点是各项都预测同一物理执行时刻，不是把相邻时间步平均。权重方向、窗口、过期规则应明确；这里不假定某个实现必然偏重新预测。旋转应在声明的几何表示里融合，夹爪离散事件应单独处理。</p>
+<h3 id="82-rtc">8.2 RTC 与普通异步队列的分界</h3>
+<p>RTC 在生成新 chunk 时，用旧计划中确定还会执行的动作作为前缀条件；论文通过去噪过程中的梯度引导及重叠区域软权重改善衔接。这不等同于最后简单拼接/平均两个数组，且引导不是严格数学意义上的零误差硬约束。<a href="https://arxiv.org/html/2506.07339v2">RTC 原论文 §3</a></p>
+<p>对我们框架的推论：设备端必须给模型服务器“当前已消费/已发布的索引、仍承诺执行的前缀、动作时间轴、epoch”；模型端要能在采样过程中使用该条件。若只是 HTTP 返回一个数组，设备侧排队播放，只能叫异步 chunk。当前 <code>AsyncPolicySource</code> 正是后者，尚未实现 RTC 或 temporal ensemble。</p>
+<p>还要分清“已承诺/已发送的目标前缀”和“机器人实际上已经到达的状态”。RTC 的前缀不能以测得 q 偷换目标 u，也不能忽略大幅跟踪误差。若后来做 retiming、IK、限位投影、接管，应使前缀与最终执行计划重新一致，必要时撤销旧结果。</p>
+<p>UMI 的相关经验是分别处理观测对齐和动作执行延迟，保留动作时间轴，并剔除到达执行端时已过期的动作。这支持我们把时间语义放到接口中，而不是把所有延迟隐藏在模型调用内部。<a href="https://arxiv.org/html/2402.10329v3">UMI §IV、附录延迟测量</a></p>
+<p>对拟接的 ZeroWAM，也必须读取其动作表示、原生 dt、预测/缓存语义再接 adapter；不能因为是 WAM 就假设能直接接 14 维关节命令或直接套 RTC。<a href="research/2026-10-19-zerowam-deployment.md">既有专项报告</a></p>
+<h2 id="9">9. 如何落实到“模块化、通用化、配置化”</h2>
+<p>建议继续保持三层数据，而不是为某个模型改写原始采集格式：</p>
+<ol>
+<li><strong>证据层</strong>：原始输入、映射/IK、发布命令、反馈、图像、时钟与所有权事件；不因训练取 10/30 Hz 而删掉原始频率。</li>
+<li><strong>解释层</strong>：可版本化的时钟映射、有效片段、动作语义、抗混叠/重采样、延迟对齐；输出含来源与 mask 的训练视图。</li>
+<li><strong>执行层</strong>：原生目标、轨迹插值、异步 chunk、TE/RTC 能力显式选择；统一设备网关并记录实际发布结果。</li>
+</ol>
+<p>下面是<strong>设计建议，不是已实现配置，不能直接交给当前 CLI</strong>：</p>
+<pre><code class="language-yaml">timing_contract:
+  version: proposed-1
+  observation:
+    clock: robot_host_monotonic
+    selection: causal_latest
+    max_age_s: per_stream
+  action:
+    representation: absolute_joint_and_gripper_target
+    dt_s: 0.033333333333
+    timestamp_semantics: scheduled_target_update
+    hold: zero_order
+  provenance:
+    preserve_source_time: true
+    preserve_receive_time: true
+    record_resampling_and_filter: true
+</code></pre>
+<p>这份建议刻意不把 30 Hz 当全框架默认：不同模型、控制模式和任务可以选择别的 dt，但训练和执行必须使用同一个可核验契约。</p>
+<h3 id="_2">建议推进顺序</h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>优先级</th>
+<th>下一切片</th>
+<th>验收内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P0</td>
+<td>Timing QC：以已有事件生成时序报告</td>
+<td>每流间隔、输入覆盖、有效结果年龄、目标/反馈误差、两臂时差；分数据完整性和训练质量</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>通信基准与调度审计</td>
+<td>fake 注入 RTT/抖动；比较当前 ACK 门控与有界独立位姿发送；按键/epoch/停止语义不退化</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Replay evaluator</td>
+<td>原示范 vs 回放状态对齐，报告不平移误差和时间偏差；只评价已验证片段</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>版本化 training resampler</td>
+<td>明确 state/action/image 各规则，夹爪事件处理、dt、offset、mask、抗混叠与 provenance</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>真实相机 shadow 推理</td>
+<td>校验观测年龄、传输/模型尾延迟、队列覆盖、过期拒绝；不驱动机器人</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>可替换轨迹处理 / RTC adapter</td>
+<td>分别验证插值、TE、RTC；禁止把普通异步伪称 RTC</td>
+</tr>
+</tbody>
+</table></div>
+<p>不建议现在直接把所有频率提到 200 Hz：这可能只增加重复消息、锁竞争、带宽和存储。先找出新信息在哪里丢失，再做有指标的改进。也不建议凭这 3 秒日志拟合一个“Piper 延迟常数”用于所有负载和姿态。</p>
+<h2 id="10">10. 下一轮实验怎样证明改进有效</h2>
+<p>本节是后续实验计划，此次未执行。</p>
+<ul>
+<li><strong>纯软件基准</strong>：固定轨迹，注入确定延迟/随机抖动/断流；比较提交率、接收率、覆盖率、最大年龄、按钮边沿保真。</li>
+<li><strong>只读观测</strong>：相机原生帧 ID、时间域、编码与写盘队列、SDK 时间戳变化；确认统计测的是源采样还是缓存发布。</li>
+<li><strong>明确授权后的硬件辨识</strong>：在几个姿态/负载下做温和的阶跃或多频目标，分别报告手臂和夹爪响应、跟踪误差和延迟分布。不能用相互相关的单一峰值断言所有延迟分量。</li>
+<li><strong>回放对照</strong>：同一源、同一初始状态与参数，比较 native target 保持和显式插值；报告原示范反馈与回放反馈，以及任务是否成功。</li>
+<li><strong>模型消融</strong>：固定任务划分，比较 10/20/30 Hz、不同物理 horizon、K、推理延迟；评价任务成功、响应年龄、跟踪、chunk 边界跳变，不只看训练 loss。</li>
+</ul>
+<p>实验比较必须区分新参数的效果与网络环境变化。训练集按 episode/场景划分，避免相邻高度相关帧落入训练和验证两侧。示范仍需真实任务描述和成功标签，目前 <code>new_test</code> 三集是手感与质量测试，不能作为已验证任务数据集。</p>
+<h2 id="11">11. 证据、复现与阅读路线</h2>
+<p><strong>建议先看交互报告的 A/B/C，再看真实回放 D；然后回读第 4、7、8 节公式。</strong> HTML 使用本地资源和原生 MathML，不依赖在线 CDN；Markdown 可在 Obsidian 中阅读公式和 Mermaid。</p>
+<p>离线分析脚本：</p>
+<pre><code class="language-powershell">uv run --no-project --with matplotlib --with markdown --with latex2mathml python tools/analyze_signal_timing.py
+uv run --no-project --with matplotlib --with markdown --with latex2mathml python tools/build_signal_report.py
+</code></pre>
+<p>第一条需要未纳入公开资产的本地原始日志；已经提取的 JSON、CSV、SVG 和 HTML 可独立阅读。第二条用已提取资产重建报告。<code>evidence.json</code> 包含源路径、SHA256、窗口、统计口径和全六关节曲线。首次运行可能需下载隔离工具依赖，不更改机器人环境。</p>
+<h3 id="_3">源码阅读索引</h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>问题</th>
+<th>文件 / 函数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>页面是否每帧发包</td>
+<td><code>web/xr-session.js: frame / sample</code></td>
+</tr>
+<tr>
+<td>传输是否等待 ACK</td>
+<td><code>web/xr-transport.js: submit / drain / socketPost</code></td>
+</tr>
+<tr>
+<td>是否每 tick 求新 IK</td>
+<td><code>teleop_session.py: _teleop_tick / start</code></td>
+</tr>
+<tr>
+<td>最新请求怎样覆盖</td>
+<td><code>solver_worker.py: request / poll</code></td>
+</tr>
+<tr>
+<td>IK 的真实目标函数</td>
+<td><code>pinocchio_model.py: ik</code></td>
+</tr>
+<tr>
+<td>命令是否等于执行确认</td>
+<td><code>live_control.py: submit</code></td>
+</tr>
+<tr>
+<td>是否按统一 30 Hz 记录</td>
+<td><code>real_episode.py: EpisodeWriter / frame</code></td>
+</tr>
+<tr>
+<td>训练是否用未来反馈</td>
+<td><code>training_view.py: view_rows / _latest</code></td>
+</tr>
+<tr>
+<td>回放会不会重跑 IK</td>
+<td><code>workflow.py: ReplaySource.sample / ExecutionSession.tick</code></td>
+</tr>
+<tr>
+<td>当前是否已实现 RTC</td>
+<td><code>workflow.py: AsyncPolicySource</code>，只有异步队列</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="_4">主要外部资料</h3>
+<p>这些资料支持对应小节的算法/理论描述；本项目的参数判断、误差分析和改进优先级是结合本地证据作出的研究结论，不是论文对 Piper 的实验结果。</p>
+<ol>
+<li><a href="https://www.w3.org/TR/2026/CRD-webxr-20260609/">W3C WebXR Device API，2026-06-09 版本</a>：XRFrame 与预测显示时间。</li>
+<li><a href="https://ocw.mit.edu/courses/hst-582j-biomedical-signal-and-image-processing-spring-2007/54ae74896b15e34e9e7fea0d94c17777_ch5_samp.pdf">MIT 采样讲义</a>：带限、采样与 sinc 重建。</li>
+<li><a href="https://modernrobotics.northwestern.edu/nu-gm-book-resource/6-2-numerical-inverse-kinematics-part-1-of-2/">Modern Robotics 数值 IK</a>：Jacobian、初值与数值迭代。</li>
+<li><a href="https://www.roboticsproceedings.org/rss19/p016.pdf">ACT / ALOHA，RSS 2023</a>：chunk 与 temporal ensemble。</li>
+<li><a href="https://diffusion-policy.cs.columbia.edu/">Diffusion Policy，2023</a>：动作序列生成与滚动执行。</li>
+<li><a href="https://arxiv.org/abs/2210.02747">Flow Matching，2022/2023</a>：条件概率路径和向量场。</li>
+<li><a href="https://arxiv.org/abs/2212.09748">DiT，2022/2023</a>：Transformer 扩散骨干。</li>
+<li><a href="https://arxiv.org/html/2506.07339v2">RTC，2025</a>：推理期前缀引导与异步 chunk。</li>
+<li><a href="https://arxiv.org/html/2402.10329v3">UMI，2024</a>：观测与动作延迟匹配。</li>
+</ol>
+<p><strong>研究边界：</strong> 没有测出头显跟踪内部频率、Piper 原生伺服率或完整端到端延迟分解；没有证明本次回放与原示范实际轨迹精确一致；没有运行真实策略。本轮给出理论、源码审计与已录日志分析，不把这些空白用典型值填满。</p></article>
+<footer class="footer">离线阅读 · 本地资源 · 无遥测 · 原始日志未修改。使用浏览器打印可保存正文 PDF；交互图保留在网页中。</footer>
+</main></div><script src="assets/signal-timing/evidence.js"></script><script src="assets/signal-timing/report.js"></script></body></html>

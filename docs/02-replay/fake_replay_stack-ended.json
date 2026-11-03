@@ -1,0 +1,11 @@
+{
+  "exit_codes": {},
+  "stop_semantics": "gateway measured hold; no automatic home, disable or gripper-close",
+  "stats": {
+    "submitted": 3833,
+    "rejected": {},
+    "rearms": 0,
+    "approaches": 1
+  },
+  "errors": []
+}

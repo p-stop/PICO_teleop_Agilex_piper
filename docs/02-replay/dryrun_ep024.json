@@ -1,0 +1,46 @@
+{
+  "frames": 1018,
+  "duration_s": 33.93333333333333,
+  "first_action_distance_from_start_rad": 0.0,
+  "action_speed_rad_s": {
+    "p95": 0.7979557514190669,
+    "max": 2.854587435722351
+  },
+  "tracker_speed_rad_s_max": 0.8000000000000002,
+  "tracker_accel_rad_s2_max": 4.000000000000625,
+  "tracker_minus_action_rad": {
+    "p50": 0.005790728978247818,
+    "p95": 0.03472938676483782,
+    "max": 0.08832178771431637
+  },
+  "params": {
+    "hz": 60.0,
+    "T": 0.08,
+    "vmax": 0.8,
+    "amax": 4.0
+  },
+  "action_minus_recorded_state_rad": {
+    "p50": 0.01238127052783966,
+    "p95": 0.13255112469196317,
+    "max": 0.18372225016355515
+  },
+  "tracker_minus_recorded_state_rad": {
+    "p50": 0.006246200093084631,
+    "p95": 0.11209732538077011,
+    "max": 0.16135948114665238
+  },
+  "tracker_minus_recorded_state_rms_per_joint_mrad": [
+    2.5,
+    22.4,
+    2.8,
+    19.8,
+    15.0,
+    6.3,
+    5.3,
+    11.1,
+    11.8,
+    21.4,
+    10.0,
+    22.1
+  ]
+}

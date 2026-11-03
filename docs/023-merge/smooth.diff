@@ -1,0 +1,250 @@
+--- src018/src/robot_infra/teleop_session.py	2026-10-22 17:24:36.000000000 +0800
++++ src022/src/robot_infra/teleop_session.py	2026-11-03 11:16:40.000000000 +0800
+@@ -2,6 +2,11 @@
+ 
+ The control thread is the sole normal command producer. IK is submitted to
+ latest-target workers. VR loss and explicit pause invalidate all old tokens.
++
++Teleop input is shaped before mapping: tracked grip poses pass One-Euro
++low-pass filters with anchor-relative translation/rotation deadbands, IK
++results are only followed when converged or within a small residual, and
++commanded joints are rate-limited with first-order blending per cycle.
+ """
+ from collections import deque
+ from copy import deepcopy
+@@ -11,6 +16,122 @@
+ 
+ from .webxr_input import validate_packet
+ 
++TELEOP_FILTER_KEYS = ('position_min_cutoff_hz', 'position_beta', 'orientation_min_cutoff_hz',
++                      'orientation_beta', 'position_deadband_m', 'rotation_deadband_rad',
++                      'command_alpha', 'max_joint_rate_rad_s', 'rate_headroom',
++                      'accept_max_position_error_m')
++
++
++def _q_mul(a, b):
++    ax, ay, az, aw = a; bx, by, bz, bw = b
++    return (aw*bx+ax*bw+ay*bz-az*by,
++            aw*by-ax*bz+ay*bw+az*bx,
++            aw*bz+ax*by-ay*bx+az*bw,
++            aw*bw-ax*bx-ay*by-az*bz)
++
++
++def _q_conj(q):
++    return (-q[0], -q[1], -q[2], q[3])
++
++
++def _q_normalize(q):
++    norm = math.sqrt(sum(v*v for v in q))
++    if not math.isfinite(norm) or norm < 1e-12: raise ValueError('invalid tracked quaternion')
++    return tuple(v/norm for v in q)
++
++
++def _q_relative_angle(a, b):
++    r = _q_mul(a, _q_conj(b))
++    return 2*math.atan2(math.sqrt(max(0., min(1., 1-r[3]*r[3]))), abs(r[3]))
++
++
++def _q_slerp(a, b, t):
++    dot = sum(x*y for x, y in zip(a, b))
++    if dot < 0.: b = tuple(-v for v in b); dot = -dot
++    if dot > .9995:
++        return _q_normalize(tuple(x+t*(y-x) for x, y in zip(a, b)))
++    theta = math.acos(min(1., dot)); sin = math.sin(theta)
++    return tuple(math.sin((1.-t)*theta)/sin*x+math.sin(t*theta)/sin*y for x, y in zip(a, b))
++
++
++class _OneEuro:
++    """Adaptive cutoff shared by the position and orientation filters."""
++    def __init__(self, min_cutoff_hz, beta):
++        self.min_cutoff_hz, self.beta, self.d_cutoff_hz = min_cutoff_hz, beta, 1.
++        self.derivative = 0.
++
++    @staticmethod
++    def alpha(cutoff, dt):
++        tau = 1/(2*math.pi*cutoff)
++        return 1/(1+tau/dt)
++
++    def factor(self, speed, dt):
++        a = self.alpha(self.d_cutoff_hz, dt)
++        self.derivative = a*speed+(1-a)*self.derivative
++        return self.alpha(self.min_cutoff_hz+self.beta*abs(self.derivative), dt)
++
++
++class _VectorFilter(_OneEuro):
++    """Position low-pass: strong smoothing at rest, low lag during motion."""
++    def __init__(self, min_cutoff_hz, beta):
++        super().__init__(min_cutoff_hz, beta)
++        self.value = self.filtered = None
++
++    def step(self, value, dt):
++        if self.filtered is None:
++            self.value, self.filtered = list(value), list(value)
++            return list(value)
++        speed = math.sqrt(sum((v-p)**2 for v, p in zip(value, self.value)))/dt
++        a = self.factor(speed, dt)
++        self.filtered = [a*v+(1-a)*f for v, f in zip(value, self.filtered)]
++        self.value = list(value)
++        return list(self.filtered)
++
++
++class _QuaternionFilter(_OneEuro):
++    """Orientation SLERP low-pass with speed-adaptive cutoff; stays normalized."""
++    def __init__(self, min_cutoff_hz, beta):
++        super().__init__(min_cutoff_hz, beta)
++        self.filtered = None
++
++    def step(self, q, dt):
++        q = _q_normalize(q)
++        if self.filtered is None:
++            self.filtered = q; return q
++        a = self.factor(_q_relative_angle(q, self.filtered)/dt, dt)
++        self.filtered = _q_normalize(_q_slerp(self.filtered, q, a))
++        return self.filtered
++
++
++class GripFilter:
++    """Per-engagement input shaping: filtered hand pose with anchor-relative deadbands."""
++    def __init__(self, grip, settings):
++        self.settings = settings
++        self.position = _VectorFilter(settings['position_min_cutoff_hz'], settings['position_beta'])
++        self.orientation = _QuaternionFilter(settings['orientation_min_cutoff_hz'], settings['orientation_beta'])
++        self.last_s = None
++        self.anchor = (self.position.step(list(grip['position_m']), .02),
++                       self.orientation.step(tuple(grip['orientation_xyzw']), .02))
++
++    def step(self, grip, now):
++        dt = .02 if self.last_s is None else min(.2, max(1e-3, now-self.last_s))
++        self.last_s = now
++        position = self.position.step(list(grip['position_m']), dt)
++        orientation = self.orientation.step(tuple(grip['orientation_xyzw']), dt)
++        anchor_p, anchor_q = self.anchor
++        deadband = self.settings['position_deadband_m']
++        delta = [p-c for p, c in zip(position, anchor_p)]
++        magnitude = math.sqrt(sum(v*v for v in delta))
++        factor = 0. if magnitude <= deadband else (magnitude-deadband)/magnitude
++        effective_p = [c+factor*d for c, d in zip(anchor_p, delta)]
++        relative = _q_mul(orientation, _q_conj(anchor_q))
++        limit = self.settings['rotation_deadband_rad']
++        if limit > 0:
++            angle = _q_relative_angle(relative, (0., 0., 0., 1.))
++            if angle <= limit: relative = (0., 0., 0., 1.)
++            else: relative = _q_normalize(_q_slerp((0., 0., 0., 1.), relative, (angle-limit)/angle))
++        return {'position_m': effective_p, 'orientation_xyzw': _q_mul(relative, anchor_q)}
++
+ 
+ def validate_session_profile(config):
+     c = config
+@@ -70,6 +191,13 @@
+     if transport.get('input')=='websocket' and (type(transport.get('port')) is not int or not 1<=transport['port']<=65535):raise ValueError('explicit control port required')
+     for key in ('preview_congestion_rtt_ms','preview_congestion_fps'):
+         if key in transport and (type(transport[key]) not in (int,float) or not math.isfinite(transport[key]) or transport[key]<=0):raise ValueError('invalid transport setting')
++    filtering=c.get('teleop_filter',{})
++    if not isinstance(filtering,dict):raise ValueError('teleop_filter must be an object')
++    for key,value in filtering.items():
++        if key not in TELEOP_FILTER_KEYS:raise ValueError('unknown teleop_filter key: '+key)
++        if type(value) not in (int,float) or not math.isfinite(value) or value<0:raise ValueError('invalid teleop_filter value: '+key)
++    for key in ('command_alpha','rate_headroom'):
++        if key in filtering and not 0<filtering[key]<=1:raise ValueError('teleop_filter ratio must be within (0,1]: '+key)
+     layout=c.get('vr_layout',{})
+     if 'hud_face_viewer' in layout and type(layout['hud_face_viewer']) is not bool:raise ValueError('invalid HUD facing mode')
+     if 'hud_tilt_deg' in layout and (type(layout['hud_tilt_deg']) not in (int,float) or not math.isfinite(layout['hud_tilt_deg']) or not -90<=layout['hud_tilt_deg']<=90):raise ValueError('invalid HUD tilt')
+@@ -81,9 +209,9 @@
+         if any(not isinstance(t,str) or not t.startswith('/') for t in topics) or len(set(topics))!=len(topics):raise ValueError('distinct explicit arm/enable/gripper topics required')
+     for key in ('primary','discard'):
+         if buttons[key]['hand'] not in ('left','right') or type(buttons[key]['index']) is not int or not 0<=buttons[key]['index']<64:
+-            raise ValueError('invalid button binding')
++            raise ValueError('invalid button binding: '+key)
+     for key in ('clutch','trigger'):
+-        if type(buttons[key]) is not int or not 0<=buttons[key]<64: raise ValueError('invalid analog button index')
++        if type(buttons[key]) is not int or not 0<=buttons[key]<64: raise ValueError('invalid analog button index: '+key)
+     if buttons['primary']==buttons['discard']: raise ValueError('primary and discard buttons must differ')
+     # Reuse the established transform validation, without importing ROS/math deps.
+     from .live_teleop import validate_profile
+@@ -114,6 +242,14 @@
+         self.anchors, self.tokens, self.targets, self.requested = {}, {}, {}, {}
+         self.token_counter = self.command_seq = self.trials = 0
+         self.last_motion = {}
++        filtering={'position_min_cutoff_hz':1.,'position_beta':20.,'orientation_min_cutoff_hz':1.,'orientation_beta':3.,
++                   'position_deadband_m':.0025,'rotation_deadband_rad':.0175,'command_alpha':.35,
++                   'max_joint_rate_rad_s':.8,'rate_headroom':.9,'accept_max_position_error_m':.005}
++        unknown=set(self.config.get('teleop_filter') or {})-set(filtering)
++        if unknown:raise ValueError('unknown teleop_filter key: '+sorted(unknown)[0])
++        filtering.update(self.config.get('teleop_filter') or {})
++        self.teleop_filter=filtering
++        self.hand_filters, self.sent = {}, {}
+         self.jaw_baselines,self.jaw_targets={},{}
+         self.home_started = self.settled_since = None
+         self.closed, self.closing = False, threading.Event()
+@@ -178,6 +314,7 @@
+         self.anchors.clear();self.tokens.clear();self.targets.clear();self.requested.clear()
+         self.token_counter += 1
+         self.jaw_baselines.clear();self.jaw_targets.clear()
++        self.hand_filters.clear();self.sent.clear()
+         for worker in self.workers.values(): worker.clear()
+ 
+     def _pause(self, reason, fault=False):
+@@ -308,6 +445,22 @@
+                 self.g.stop('home_reached');self._transition('READY','press_A_to_start')
+         else:self.settled_since=None
+ 
++    def _shape_command(self,side,measured,target):
++        # Output shaping: first-order blending toward the latest gated target,
++        # then a per-cycle joint rate limit (the v1 ramp semantics).
++        now=self.clock()
++        last=self.sent.get(side)
++        current=measured if last is None else last[0]
++        alpha=self.teleop_filter['command_alpha']
++        blended=tuple(c+alpha*(t-c) for c,t in zip(current,target))
++        dt=1/self.config['session']['control_hz'] if last is None else max(0.,now-last[1])
++        allowed=self.teleop_filter['max_joint_rate_rad_s']*min(.08,dt)*self.teleop_filter['rate_headroom']
++        diff=max((abs(t-c) for t,c in zip(target,blended)),default=0.)
++        ratio=1. if diff<=1e-12 else min(1.,allowed/diff)
++        shaped=tuple(c+ratio*(t-c) for c,t in zip(current,blended))
++        self.sent[side]=(shaped,now)
++        return shaped
++
+     def _teleop_tick(self,packet,neutral):
+         hands={x['handedness']:x for x in packet['inputs']}
+         active,jaws=set(),{}
+@@ -335,6 +488,7 @@
+                 if side in self.anchors:
+                     self.g.release(side);self.anchors.pop(side,None);self.tokens.pop(side,None)
+                     self.targets.pop(side,None);self.workers[side].clear()
++                    self.hand_filters.pop(side,None);self.sent.pop(side,None)
+                 continue
+             active.add(side)
+             if side not in self.anchors:
+@@ -343,12 +497,15 @@
+                 self.token_counter+=1
+                 self.tokens[side]=f'{epoch}:{self.token_counter}:{packet["epoch"]}'
+                 self.anchors[side]=(deepcopy(grip),self.g.model.fk(q),hand.get('source_id'))
++                self.hand_filters[side]=GripFilter(grip,self.teleop_filter)
++                self.sent.pop(side,None)
+                 self.g.emit('mapping_anchor',{'side':side,'token':self.tokens[side],'q':q,'hand':grip})
+             hand0,pose0,source_id=self.anchors[side]
+             if source_id!=hand.get('source_id'):
+                 self._pause('controller_replaced');return
+             if self.requested.get(side)!=packet['seq']:
+-                target=self.g.model.relative_target(pose0,hand0,grip,self.config['alignment'],self.config['scale'],self.config['rotation_control'])
++                shaped=self.hand_filters[side].step(grip,self.clock())
++                target=self.g.model.relative_target(pose0,hand0,shaped,self.config['alignment'],self.config['scale'],self.config['rotation_control'])
+                 with self.g.lock:seed=self.g.states[side]['q']
+                 goal={'seq':packet['seq'],'token':self.tokens[side],'created_s':self.clock(),'target':target,'seed':seed}
+                 self.g.emit('intent',{'side':side,**goal})
+@@ -359,8 +516,13 @@
+                 self.g.emit('motion_result',{'side':side,'usable':usable,**result})
+                 if usable:
+                     self.last_motion[side]=result['result']
+-                    if result['result']['accepted']:self.targets[side]=tuple(result['result']['positions'])
+-            values[side]=self.targets.get(side,values[side])
++                    outcome=result['result']
++                    # Follow only converged solutions, or best-effort ones whose
++                    # residual is small; larger unconverged results hold the target.
++                    converged=outcome.get('reason') in (None,'converged') or outcome.get('position_error_m',0.)<=self.teleop_filter['accept_max_position_error_m']
++                    if outcome['accepted'] and converged:self.targets[side]=tuple(outcome['positions'])
++            if side in self.targets:
++                values[side]=self._shape_command(side,values[side],self.targets[side])
+             if not independent:jaws[side]=width
+         if active or jaws:self._submit(values,active,jaws)
+ 

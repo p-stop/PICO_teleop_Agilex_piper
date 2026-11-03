@@ -1,0 +1,580 @@
+{
+  "schema_version": "data-quality-metrics-proposal/0.1",
+  "date": "2026-10-22",
+  "documentation_only": true,
+  "runtime_loader_supported": false,
+  "scope": "指标定义与研究依据；不是实测结果、可运行配置或新增验收阈值。",
+  "metric_definition_evidence": "P: project proposal; linked sources motivate the problem, not necessarily this exact formula.",
+  "dimensions": [
+    "integrity",
+    "timing",
+    "semantics",
+    "perception",
+    "behavior",
+    "coverage",
+    "deployment"
+  ],
+  "decision_statuses": [
+    "pass",
+    "fail",
+    "unknown",
+    "not_applicable"
+  ],
+  "evaluation_modes": [
+    "gate",
+    "monitor_only"
+  ],
+  "unknown_policy": "No measurement => null. No calibrated threshold => unknown/threshold_not_calibrated, even if a value exists. Required unknown => pending. Required metric cannot be not_applicable.",
+  "threshold_basis_types": [
+    "contract",
+    "task_error_budget",
+    "empirical_validation",
+    "literature_reference_only"
+  ],
+  "availability_note": "implemented_partial refers to existing checks or supporting records, not this proposed report interface. proposed may be computable from existing logs. No new metric implementation in plan017.",
+  "metrics": [
+    {
+      "id": "I01",
+      "definition_version": 1,
+      "dimension": "integrity",
+      "name": "文件与引用完整性",
+      "unit": "count",
+      "level": "对象/episode",
+      "denominator": "manifest与索引列出的全部必需对象；未索引对象另查",
+      "definition": "必需对象损坏/缺失计数",
+      "current_availability": "implemented_partial",
+      "default_mode": "gate",
+      "threshold": {
+        "basis": "contract",
+        "rule": "必需对象损坏/缺失数为0"
+      },
+      "source_ids": [
+        "qwen",
+        "droid"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "I02",
+      "definition_version": 1,
+      "dimension": "integrity",
+      "name": "必需流与有效覆盖",
+      "unit": "ratio,count",
+      "level": "stream/episode",
+      "denominator": "episode物理时长；必需流集合",
+      "definition": "有效覆盖时长/总窗；缺失流计数",
+      "current_availability": "implemented_partial",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "droid"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "T01",
+      "definition_version": 1,
+      "dimension": "timing",
+      "name": "间隔与首尾缺口",
+      "unit": "s,count",
+      "level": "stream/window",
+      "denominator": "全部相邻有效源或接收时刻；边界单列",
+      "definition": "p50/p95/max间隔、首末缺口、乱序数",
+      "current_availability": "implemented_partial",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "umi"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "T02",
+      "definition_version": 1,
+      "dimension": "timing",
+      "name": "因果观测年龄",
+      "unit": "s,ratio",
+      "level": "stream/window",
+      "denominator": "完整评估时长；known与unknown分开",
+      "definition": "按时长加权年龄及超龄/未知覆盖；source/receive分开",
+      "current_availability": "proposed",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "umi"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "T03",
+      "definition_version": 1,
+      "dimension": "timing",
+      "name": "同步误差上界",
+      "unit": "s,ratio",
+      "level": "multimodal/window",
+      "denominator": "全部应配对行及可比时间覆盖",
+      "definition": "max_ij(abs(source_i-source_j)+u_i+u_j)",
+      "current_availability": "proposed",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "umi",
+        "qwen"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "T04",
+      "definition_version": 1,
+      "dimension": "timing",
+      "name": "输入到发布链路",
+      "unit": "s,count,ratio",
+      "level": "event/phase",
+      "denominator": "在状态与ownership规则下应执行的事件",
+      "definition": "关联各阶段计数、拒绝原因与延迟；源端未知单列",
+      "current_availability": "implemented_partial",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "pi"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "S01",
+      "definition_version": 1,
+      "dimension": "semantics",
+      "name": "动作观测契约",
+      "unit": "count",
+      "level": "stream/view",
+      "denominator": "用途声明的必需契约字段",
+      "definition": "单位、角色、frame、joint order、目标语义不一致项",
+      "current_availability": "implemented_partial",
+      "default_mode": "gate",
+      "threshold": {
+        "basis": "contract",
+        "rule": "所有用途必需字段已知且匹配，或经有审查证据的显式转换"
+      },
+      "source_ids": [
+        "qwen",
+        "wall"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "S02",
+      "definition_version": 1,
+      "dimension": "semantics",
+      "name": "动作来源与有效mask",
+      "unit": "ratio",
+      "level": "row/view",
+      "denominator": "所有候选行×声明维数；全维行另计",
+      "definition": "已知目标比例与全维有效行比例；发布不等于硬件ACK",
+      "current_availability": "implemented_partial",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "qwen"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "S03",
+      "definition_version": 1,
+      "dimension": "semantics",
+      "name": "末端FK一致性",
+      "unit": "m,rad",
+      "level": "endpoint/window",
+      "denominator": "同一frame/time/model的有效配对",
+      "definition": "平移范数与旋转测地角；同源FK仅自洽",
+      "current_availability": "proposed",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "qwen",
+        "wall"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "E01",
+      "definition_version": 1,
+      "dimension": "semantics",
+      "name": "目标反馈跟踪",
+      "unit": "rad,m,ratio",
+      "level": "joint/phase",
+      "denominator": "可比较且无长空洞的物理时长",
+      "definition": "每分量时间加权RMSE、绝对误差p95/max和覆盖",
+      "current_availability": "proposed",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "qwen",
+        "consistency"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "V01",
+      "definition_version": 1,
+      "dimension": "perception",
+      "name": "解码与冻结候选",
+      "unit": "count,ratio,s",
+      "level": "camera/window",
+      "denominator": "全部媒体索引帧；冻结持续时间",
+      "definition": "解码失败数、source ID/stamp/像素重复分别统计",
+      "current_availability": "implemented_partial",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "droid"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "V02",
+      "definition_version": 1,
+      "dimension": "perception",
+      "name": "任务区域可见性",
+      "unit": "ratio,s",
+      "level": "camera/phase",
+      "denominator": "应可见的阶段时长",
+      "definition": "关键ROI可见时长与最长遮挡；人工/模型来源",
+      "current_availability": "proposed",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "gr3",
+        "magma"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "V03",
+      "definition_version": 1,
+      "dimension": "perception",
+      "name": "模糊曝光压缩",
+      "unit": "proxy,ratio,px",
+      "level": "camera/phase",
+      "denominator": "有效ROI像素/帧；跨profile分开",
+      "definition": "锐度代理、饱和比例、运动模糊估计；无统一阈值",
+      "current_availability": "proposed",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "qwen"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "V04",
+      "definition_version": 1,
+      "dimension": "perception",
+      "name": "深度有效性",
+      "unit": "ratio,m",
+      "level": "camera/phase",
+      "denominator": "声明ROI全部像素；标定靶有效点",
+      "definition": "有效深度比例、scale/invalid检查、标靶残差",
+      "current_availability": "implemented_partial",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "droid"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "B01",
+      "definition_version": 1,
+      "dimension": "behavior",
+      "name": "任务结果与指令匹配",
+      "unit": "label,ratio",
+      "level": "episode/task",
+      "denominator": "全部尝试N=S+F+U；未知单列",
+      "definition": "结果、完成度rubric、标注依据；确认成功S/N",
+      "current_availability": "proposed",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "agibot",
+        "gr3",
+        "pi"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "B02",
+      "definition_version": 1,
+      "dimension": "behavior",
+      "name": "阶段效率与恢复",
+      "unit": "s,count,ratio",
+      "level": "phase/episode",
+      "denominator": "已标注阶段时长与完整episode时长均披露",
+      "definition": "必要等待、无意停顿、恢复、重试与接管",
+      "current_availability": "proposed",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "scizor",
+        "grrl",
+        "deminf",
+        "consistency"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "C01",
+      "definition_version": 1,
+      "dimension": "coverage",
+      "name": "目标部署覆盖",
+      "unit": "ratio,count",
+      "level": "dataset",
+      "denominator": "预声明目标单元权重之和",
+      "definition": "加权最低样本覆盖、实际组比例熵的exp",
+      "current_availability": "proposed",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "scaling",
+        "gr3",
+        "remix"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "C02",
+      "definition_version": 1,
+      "dimension": "coverage",
+      "name": "重复与划分泄漏",
+      "unit": "count,ratio",
+      "level": "dataset/split",
+      "denominator": "全部来源组；近重复算法候选另报",
+      "definition": "已知同源跨集合组数与近重复候选",
+      "current_availability": "proposed",
+      "default_mode": "gate",
+      "threshold": {
+        "basis": "contract",
+        "rule": "已知同源跨训练/验证/测试集合的组数为0"
+      },
+      "source_ids": [
+        "datamil",
+        "scizor"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "D01",
+      "definition_version": 1,
+      "dimension": "deployment",
+      "name": "训练部署契约",
+      "unit": "count",
+      "level": "model/run",
+      "denominator": "必需契约字段集合",
+      "definition": "action dt、单位、视觉变换、历史/cache及adapter",
+      "current_availability": "implemented_partial",
+      "default_mode": "gate",
+      "threshold": {
+        "basis": "contract",
+        "rule": "所有用途必需字段已知且匹配，或经有审查证据的显式转换"
+      },
+      "source_ids": [
+        "umi",
+        "groot"
+      ],
+      "formula_evidence": "project_proposal"
+    },
+    {
+      "id": "D02",
+      "definition_version": 1,
+      "dimension": "deployment",
+      "name": "推理执行时序",
+      "unit": "s,ratio,count",
+      "level": "request/run",
+      "denominator": "全部请求或完整执行时长，按子指标声明",
+      "definition": "延迟、deadline miss、欠载、chunk接缝与跟踪",
+      "current_availability": "implemented_partial",
+      "default_mode": "monitor_only",
+      "threshold": null,
+      "source_ids": [
+        "umi",
+        "pi"
+      ],
+      "formula_evidence": "project_proposal"
+    }
+  ],
+  "historical_local_example_config": [
+    {
+      "path": "configs/teleop-session.example.json",
+      "values": {
+        "recording.qc.min_fps_ratio": 0.8,
+        "recording.qc.max_frame_gap_s": 0.15,
+        "recording.alignment.max_delta_s": 0.05,
+        "recording.qc.max_unaligned_ratio": 0.1
+      }
+    },
+    {
+      "path": "configs/training-a4s-rgb.example.json",
+      "values": {
+        "sampling.max_state_age_s": 0.1,
+        "sampling.max_image_age_s": 0.1,
+        "sampling.action_offset_steps": 1,
+        "fps": 30
+      }
+    }
+  ],
+  "historical_config_note": "Read locally 2026-10-22. Existing engineering thresholds, not current remote settings or validated high-quality criteria.",
+  "illustrative_task_budget": {
+    "not_a_default": true,
+    "error_m": 0.005,
+    "speed_bound_m_s": 0.1,
+    "clock_error_bound_s": 0.005,
+    "derived_max_age_s": 0.045,
+    "assumptions": "Local translation with bounded speed and clock error. Other spatial errors excluded; not a total task error guarantee."
+  },
+  "sources": [
+    {
+      "id": "pi",
+      "title": "Physical Intelligence π*0.6 / RECAP",
+      "url": "https://www.pi.website/blog/pistar06",
+      "evidence": "R/S",
+      "scope": "纠正与自主经验；不把失败动作直接当专家标签",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "wall",
+      "title": "Wall-OSS-0.5 v2 §3.1.3",
+      "url": "https://arxiv.org/html/2605.30877v2",
+      "evidence": "E/S",
+      "scope": "清洗流程；不是逐项独立收益证明",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "agibot",
+      "title": "AgiBot World v1 §V-E",
+      "url": "https://arxiv.org/html/2503.06669v1",
+      "evidence": "R/E",
+      "scope": "审核对照；数量与smaller文字有矛盾，不能声称严格等量",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "qwen",
+      "title": "Qwen-RobotManip v1 §2.4",
+      "url": "https://arxiv.org/html/2606.17846v1",
+      "evidence": "E/S",
+      "scope": "分数据源阈值；DA通常0.6–0.7不可直接迁移",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "gr3",
+      "title": "GR-3 v1 §3.1",
+      "url": "https://arxiv.org/html/2507.15493v1",
+      "evidence": "E/S",
+      "scope": "采集覆盖调度和状态标签",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "grrl",
+      "title": "GR-RL official abstract",
+      "url": "https://seed.bytedance.com/en/public_papers/gr-rl-going-dexterous-and-precise-for-long-horizon-robotic-manipulation",
+      "evidence": "S",
+      "scope": "只依据摘要概括；整体收益不归于筛选一项",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "groot",
+      "title": "GR00T N1 v1",
+      "url": "https://arxiv.org/html/2503.14734v1",
+      "evidence": "E/S",
+      "scope": "真实模拟生成数据分来源处理",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "scizor",
+      "title": "SCIZOR official project",
+      "url": "https://ut-austin-rpl.github.io/SCIZOR/",
+      "evidence": "R",
+      "scope": "进度筛选和去冗余；含真机及仿真",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "magma",
+      "title": "Microsoft Magma official repository",
+      "url": "https://github.com/microsoft/Magma",
+      "evidence": "E/S",
+      "scope": "空间/轨迹监督与相机运动；不是通用QC标准",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "umi",
+      "title": "Universal Manipulation Interface",
+      "url": "https://umi-gripper.github.io/",
+      "evidence": "R",
+      "scope": "观测/执行延迟匹配",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "scaling",
+      "title": "Data Scaling Laws ICLR2025",
+      "url": "https://data-scaling-laws.github.io/",
+      "evidence": "R",
+      "scope": "环境物体与示范数量；不外推固定采集量",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "deminf",
+      "title": "DemInf v2",
+      "url": "https://arxiv.org/html/2502.08623v2",
+      "evidence": "R",
+      "scope": "互信息排序；依赖表示、分布和用途",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "remix",
+      "title": "Re-Mix v1",
+      "url": "https://arxiv.org/html/2408.14037v1",
+      "evidence": "R",
+      "scope": "域混合权重与噪声尺度",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "datamil",
+      "title": "DataMIL official project",
+      "url": "https://robin-lab.cs.utexas.edu/datamodels4imitation/",
+      "evidence": "R",
+      "scope": "目标任务相关数据选择；仿真及真机",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "consistency",
+      "title": "Consistency Matters v1",
+      "url": "https://arxiv.org/html/2412.14309v1",
+      "evidence": "R",
+      "scope": "两项机器人用户研究，不代表全部VLA",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    },
+    {
+      "id": "droid",
+      "title": "DROID collection workflow",
+      "url": "https://droid-dataset.github.io/droid/example-workflows/data-collection.html",
+      "evidence": "E",
+      "scope": "标定与采前检查；非单项因果实验",
+      "checked_on": "2026-10-22",
+      "independently_reproduced": false
+    }
+  ]
+}

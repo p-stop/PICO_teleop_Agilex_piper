@@ -1,0 +1,15 @@
+.lesson-controls{margin:24px 0;display:flex;align-items:end;gap:24px;flex-wrap:wrap}
+.lesson-controls>label{flex:1;min-width:0}.lesson-buttons{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+button{font:inherit;color:var(--ink);background:#fff;border:1px solid #a9b8c2;border-radius:5px;padding:8px 16px;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}#lesson-progress{font-variant-numeric:tabular-nums;white-space:nowrap}
+.lesson>h2{margin-top:0}details{margin:24px 0;padding:14px 18px;border-left:3px solid var(--accent);background:#f1f6f5}
+summary{cursor:pointer;font-weight:600}details>p:last-child{margin-bottom:0}.course-checklist{margin:30px 0}
+.system-map{display:grid;gap:10px;margin:25px 0}.system-map>div{border-left:3px solid var(--accent);background:#eff5f5;padding:12px 16px}
+.system-map p{margin:5px 0}.system-map strong{font-size:14px;color:var(--accent)}
+#ik-experiment .controls{grid-template-columns:repeat(2,minmax(0,1fr))}
+.chart svg{overflow:hidden}.chart{min-height:260px}.chart .step{stroke:#146c80;stroke-width:2.5;fill:none}
+.chart .target{stroke:#955a30;stroke-width:1.5;stroke-dasharray:5 4;fill:none}
+.budget-fail{font-weight:600;color:#a13b28}.budget-pass{color:#246444}
+#model-report{margin-top:45px}p,li,td{overflow-wrap:break-word}math[display=inline]{max-width:100%}
+@media(max-width:600px){.lesson-controls{display:block}.lesson-buttons{margin-top:14px;justify-content:space-between;gap:8px}button{padding:8px 12px}.controls{grid-template-columns:1fr!important}.system-map>div{padding:10px 12px}details{padding:12px}}
+@media print{.lesson-controls,#experiments{display:none!important}.lesson[hidden]{display:block!important}.lesson{break-before:page}.lesson:first-child{break-before:auto}details>*{display:block!important}.hero{margin-bottom:12px}#model-report{break-before:page}}

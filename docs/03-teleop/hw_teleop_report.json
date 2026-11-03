@@ -1,0 +1,194 @@
+{
+  "run": "runs/20261103T142232Z_pico_vr_cc794a9c",
+  "teleop_windows_s": [
+    59.8
+  ],
+  "raw_input": {
+    "n": 1662,
+    "rate_hz": 28.900241481997238,
+    "mean_rate_hz": 27.794061032738362,
+    "gap_ms_p50": 34.60178699970129,
+    "gap_ms_p95": 72.7771429992572,
+    "gap_ms_max": 163.43760800009477
+  },
+  "get_action": {
+    "n": 1621,
+    "rate_hz": 27.588092399154927,
+    "mean_rate_hz": 27.100835195421364,
+    "gap_ms_p50": 36.24752250107122,
+    "gap_ms_p95": 42.96934210033214,
+    "gap_ms_max": 50.53594299897668
+  },
+  "left": {
+    "ik": {
+      "results": 1001,
+      "usable": 1000,
+      "followed_by_gate": 928,
+      "reasons": {
+        "converged": 657,
+        "best_effort": 344
+      },
+      "goal_to_result_ms_p50": 42.0,
+      "goal_to_result_ms_p95": 60.1
+    },
+    "teleop_command": {
+      "n": 1074,
+      "rate_hz": 48.09671903627894,
+      "mean_rate_hz": 44.82180485695326,
+      "gap_ms_p50": 20.791439001186518,
+      "gap_ms_p95": 31.944699800078524,
+      "gap_ms_max": 46.088320999842836,
+      "hf_rms_mrad": [
+        2.14,
+        2.45,
+        2.14,
+        2.79,
+        1.94,
+        1.94
+      ]
+    },
+    "robot_command": {
+      "n": 5980,
+      "rate_hz": 99.90633783799314,
+      "mean_rate_hz": 99.9956722980146,
+      "gap_ms_p50": 10.009374997025589,
+      "gap_ms_p95": 13.533051302147214,
+      "gap_ms_max": 22.410023000702495,
+      "hf_rms_mrad": [
+        0.58,
+        0.67,
+        0.62,
+        0.78,
+        0.56,
+        0.5
+      ]
+    },
+    "feedback_hf_rms_mrad": [
+      0.68,
+      0.74,
+      0.71,
+      0.92,
+      0.72,
+      0.69
+    ],
+    "clutch_held_s": 23.8,
+    "latency": {
+      "hand->ik_target": {
+        "lag_ms": 55.0,
+        "correlation": 0.889,
+        "samples_s": 23.8
+      },
+      "ik_target->teleop_command": {
+        "lag_ms": 115.0,
+        "correlation": 0.776,
+        "samples_s": 23.8
+      },
+      "teleop_command->robot_command": {
+        "lag_ms": 80.0,
+        "correlation": 0.991,
+        "samples_s": 23.8
+      },
+      "robot_command->feedback": {
+        "lag_ms": 70.0,
+        "correlation": 0.983,
+        "samples_s": 23.8
+      },
+      "ik_followed->teleop_command (joints)": {
+        "lag_ms": 995.0,
+        "correlation": 0.528,
+        "samples_s": 23.8
+      },
+      "hand->feedback (end to end)": {
+        "lag_ms": 380.0,
+        "correlation": 0.684,
+        "samples_s": 23.8
+      }
+    }
+  },
+  "right": {
+    "ik": {
+      "results": 1333,
+      "usable": 1333,
+      "followed_by_gate": 1200,
+      "reasons": {
+        "converged": 1136,
+        "best_effort": 197
+      },
+      "goal_to_result_ms_p50": 44.8,
+      "goal_to_result_ms_p95": 61.0
+    },
+    "teleop_command": {
+      "n": 1467,
+      "rate_hz": 45.41111797340809,
+      "mean_rate_hz": 43.37378435974777,
+      "gap_ms_p50": 22.021039001629106,
+      "gap_ms_p95": 32.629492249725445,
+      "gap_ms_max": 49.19874999905005,
+      "hf_rms_mrad": [
+        0.66,
+        0.85,
+        0.66,
+        1.08,
+        0.69,
+        0.83
+      ]
+    },
+    "robot_command": {
+      "n": 5980,
+      "rate_hz": 99.84282740116805,
+      "mean_rate_hz": 99.99571231965908,
+      "gap_ms_p50": 10.015742001996841,
+      "gap_ms_p95": 13.607879400296945,
+      "gap_ms_max": 22.491777999675833,
+      "hf_rms_mrad": [
+        0.41,
+        0.58,
+        0.53,
+        0.65,
+        0.41,
+        0.52
+      ]
+    },
+    "feedback_hf_rms_mrad": [
+      0.55,
+      0.74,
+      0.67,
+      0.82,
+      0.9,
+      0.75
+    ],
+    "clutch_held_s": 33.9,
+    "latency": {
+      "hand->ik_target": {
+        "lag_ms": 80.0,
+        "correlation": 0.887,
+        "samples_s": 33.8
+      },
+      "ik_target->teleop_command": {
+        "lag_ms": 75.0,
+        "correlation": 0.822,
+        "samples_s": 33.8
+      },
+      "teleop_command->robot_command": {
+        "lag_ms": 75.0,
+        "correlation": 0.989,
+        "samples_s": 33.9
+      },
+      "robot_command->feedback": {
+        "lag_ms": 60.0,
+        "correlation": 0.969,
+        "samples_s": 33.9
+      },
+      "ik_followed->teleop_command (joints)": {
+        "lag_ms": 995.0,
+        "correlation": 0.382,
+        "samples_s": 33.7
+      },
+      "hand->feedback (end to end)": {
+        "lag_ms": 315.0,
+        "correlation": 0.697,
+        "samples_s": 33.9
+      }
+    }
+  }
+}

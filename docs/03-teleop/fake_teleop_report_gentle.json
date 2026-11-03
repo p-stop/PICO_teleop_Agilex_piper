@@ -1,0 +1,136 @@
+{
+  "run": "/tmp/pico_fake_runs2/20261103T140337Z_pico_vr_393bef4b",
+  "teleop_windows_s": [
+    14.0
+  ],
+  "raw_input": {
+    "n": 478,
+    "rate_hz": 39.74724409279159,
+    "mean_rate_hz": 34.15688833507302,
+    "gap_ms_p50": 25.158977001410676,
+    "gap_ms_p95": 55.75553699964075,
+    "gap_ms_max": 59.70582900044974
+  },
+  "get_action": {
+    "n": 417,
+    "rate_hz": 29.901470319548753,
+    "mean_rate_hz": 29.814980426940235,
+    "gap_ms_p50": 33.44317150003917,
+    "gap_ms_p95": 34.274997749889735,
+    "gap_ms_max": 35.18207299930509
+  },
+  "left": {
+    "robot_command": {
+      "n": 1399,
+      "rate_hz": 100.08687038628689,
+      "mean_rate_hz": 100.00205333257398,
+      "gap_ms_p50": 9.991320501285372,
+      "gap_ms_p95": 10.827701498783425,
+      "gap_ms_max": 12.278815000172472,
+      "hf_rms_mrad": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "feedback_hf_rms_mrad": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "clutch_held_s": 0,
+    "latency": {}
+  },
+  "right": {
+    "ik": {
+      "results": 656,
+      "usable": 656,
+      "followed_by_gate": 251,
+      "reasons": {
+        "converged": 208,
+        "best_effort": 448
+      },
+      "goal_to_result_ms_p50": 36.3,
+      "goal_to_result_ms_p95": 37.4
+    },
+    "teleop_command": {
+      "n": 659,
+      "rate_hz": 55.089833748544415,
+      "mean_rate_hz": 54.93885728998927,
+      "gap_ms_p50": 18.152169501263415,
+      "gap_ms_p95": 18.988954002452374,
+      "gap_ms_max": 19.888637998519698,
+      "hf_rms_mrad": [
+        1.6,
+        1.55,
+        1.83,
+        2.25,
+        2.11,
+        2.21
+      ]
+    },
+    "robot_command": {
+      "n": 1399,
+      "rate_hz": 100.08730615562034,
+      "mean_rate_hz": 100.00240138815016,
+      "gap_ms_p50": 9.991277000153787,
+      "gap_ms_p95": 10.821416649559977,
+      "gap_ms_max": 12.272579999262234,
+      "hf_rms_mrad": [
+        0.93,
+        0.79,
+        1.0,
+        1.18,
+        1.2,
+        1.16
+      ]
+    },
+    "feedback_hf_rms_mrad": [
+      0.9,
+      0.79,
+      0.96,
+      1.13,
+      1.12,
+      1.11
+    ],
+    "clutch_held_s": 12.0,
+    "latency": {
+      "hand->ik_target": {
+        "lag_ms": 100.0,
+        "correlation": 0.956,
+        "samples_s": 11.9
+      },
+      "ik_target->teleop_command": {
+        "lag_ms": 995.0,
+        "correlation": 0.555,
+        "samples_s": 11.9
+      },
+      "teleop_command->robot_command": {
+        "lag_ms": 85.0,
+        "correlation": 0.992,
+        "samples_s": 12.0
+      },
+      "robot_command->feedback": {
+        "lag_ms": 10.0,
+        "correlation": 0.995,
+        "samples_s": 12.0
+      },
+      "ik_followed->teleop_command (joints)": {
+        "lag_ms": 995.0,
+        "correlation": 0.64,
+        "samples_s": 10.5
+      },
+      "hand->feedback (end to end)": {
+        "lag_ms": 1490.0,
+        "correlation": 0.204,
+        "samples_s": 12.0
+      }
+    }
+  }
+}
