@@ -129,3 +129,22 @@ run：`runs/20261103T152234Z_pico_vr_8cbd7a13`。这次用的是边录边编码�
 - fake 验证：41.5 s 一条（1239 帧），保存 6.0 s，编码进程 nice 10 已确认，lerobot 循环无「running slower」，虚拟头显 RTT p50 3 ms / p95 6 ms。按比例，100 s 一条保存约 15 s，这期间机械臂保持受控。
 
 备份：`backups/20261103-pico-record/*.v2`。
+
+### 5.4 保存移到后台进程，录下一条不用等（11-04）
+
+现场（11-04 上午）：关掉无线省电、拔掉第二块 USB 网卡后，录制中 RTT 平稳（最大 129 ms），但每次 A 保存时控制通道 RTT 仍涨到 500–780 ms，头显报 `stale server freshness ticket` 或「WebRTC 发送缓冲积压」后断开；保存期间服务端收包间隔正常（最大 96 ms）、单包处理 p95 从 11 ms 升到 23 ms，说明是保存挤占了录制进程（aiortc 与 save_episode 同一进程、同一 GIL），不是无线。保存耗时约为录制时长的 0.75 倍（40 s 一条存 30 s，84 s 一条存 62 s）。另：84 s 那条保存超过 60 s 时，页面断开后在 PAUSED 里按 A 会误报 `recorder_flush_timeout`（023 `teleop_session.py` 在 PAUSED 按 A 时沿用旧的 `finalize_started`）；保存改到后台后 COMMITTING 只有一瞬间，基本碰不到。
+
+修改（`pico_record.py`，新增 `background_save.py`、`save_worker.py`）：
+- A 保存：主进程等这一条的 PNG 写完，校验缓冲，把缓冲（关节值 + PNG 路径）写成 `/tmp/pico_save_epNNN_*/job.pkl` 交给后台队列，立刻回 STANDBY；下一条的缓冲直接用下一个编号。
+- 后台队列一次跑一个 `python -m lerobot_teleoperator_pico_vr.save_worker job.pkl`（nice 10，独立会话，Ctrl+C 打不断）：`LeRobotDataset.resume` → lerobot 原版 `save_episode` → `finalize`。按录制顺序逐条保存（lerobot 按已存条数编号）。
+- 每条都是一次 resume，所以每条单独一个 data parquet、episodes parquet 和三路 mp4（`file-NNN`），不再往同一个 mp4 里拼接（原来拼接越拼越慢）。lerobot 读取正常。
+- 结束（录满、Esc、Ctrl+C）时先等队列里的保存全部完成（保活线程继续控住机械臂，Ctrl+C 只提示不打断），再走 lerobot 原有的收尾。
+- 某条保存失败：后面排队的不再保存（编号依赖前一条），任务文件和 PNG 留在原处，终端和头显报错（会话 FAULT），下一次 A 保存会直接报错停下。
+- 终端事件：`pico_record_save_queued`、`pico_record_saved`（含 save_s、pending）、`pico_record_waiting_for_saves`、`pico_record_save_failed`。lerobot 自己打印的「Recording episode N」是已存完的条数，以 `pico_record_waiting` 里的 episode 为准。
+
+fake 验证（11-04）：
+- `--record ssds`、3 条：存、存、丢弃重录、存，退出码 0；虚拟头显 2003 包 0 错误，RTT p50 3 ms / p95 6 ms。
+- `--record sss --move-s 12 --dataset.rgb_encoder.preset=veryslow`：第 2 条开始录时第 1 条还在保存（录制与保存重叠）；数据集 3 条 1211 帧，索引连续，三路视频各 13.4 s，`images/` 和 `/tmp/pico_save_*` 已清空；机械臂下发 6859 次，拒绝 0、重新接管 0，send_action 间隔 p50 33.4 ms、最大 36.3 ms；无「running slower」。
+- 未覆盖：保存进行中按 Ctrl+C（灰图保存只有 2–3 s，没卡准时机）；保存失败路径。
+
+备份：`backups/20261104-background-save/*.v3`。

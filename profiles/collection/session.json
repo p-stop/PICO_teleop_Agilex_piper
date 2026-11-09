@@ -80,7 +80,7 @@
   "max_tracking_error_rad": null,
   "max_joint_speed_rad_s": null,
   "max_cartesian_delta_m": null,
-  "scale": 1.0,
+  "scale": 1.3,
   "clutch_button": 1,
   "driver_speed_percent": 20,
   "alignment": [

@@ -13,9 +13,14 @@ right arrow = end episode / save it in review, left arrow = discard and re-recor
 Esc = save the current episode and stop. --dataset.episode_time_s is only a safety
 limit (the episode then goes to review like an A end); --dataset.reset_time_s is unused.
 
-Between episodes (waiting for A start, review, saving) the teleop keeps commanding
-the robot (measured hold, home trajectory), so the robot never loses control while
-lerobot encodes the videos.
+Saving runs in the background (background_save.py / save_worker.py): A save queues the
+episode and the headset is back in STANDBY at once, so the next episode can be recorded
+while the previous ones are written, one process per episode, in order, at nice 10.
+At the end (episodes done, Esc or Ctrl+C) pico-record waits for the queued saves.
+
+Between episodes (waiting for A start, review) and while waiting for the saves at the
+end, the teleop keeps commanding the robot (measured hold, home trajectory), so the
+robot never loses control.
 """
 import concurrent.futures
 from contextlib import contextmanager
@@ -25,10 +30,13 @@ import logging
 import threading
 import time
 
+from lerobot.datasets import dataset_metadata
+from lerobot.datasets.feature_utils import validate_episode_buffer
 from lerobot.scripts import lerobot_record as lr
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 
+from .background_save import SaveQueue
 from .record_bridge import EpisodeBridge
 
 logger = logging.getLogger("pico_record")
@@ -45,9 +53,11 @@ class Driver:
 
     def __init__(self):
         self.bridge = self.robot = self.teleop = self.dataset = self.session = None
+        self.saver = None
+        self.next_index = None  # episode index of the buffer being recorded (saves may still be queued)
+        self.synced = 0  # saver.done when the dataset's info was last reloaded
         self.events = None
         self.fps = 30
-        self.in_save = False
         self.lock = threading.Lock()  # one caller of get_action/send_action at a time
 
     # ---------------------------------------------------------------- setup
@@ -60,45 +70,100 @@ class Driver:
             raise RuntimeError("pico-record needs --teleop.type=pico_vr (the headset session drives the episodes)")
         self.robot, self.teleop, self.dataset, self.session = kw["robot"], teleop, dataset, app.session
         self.events, self.fps = kw["events"], kw["fps"]
+        self.next_index = dataset.num_episodes
         self.bridge = EpisodeBridge(kw.get("single_task"), events=self.events,
                                     episode_index=dataset.num_episodes, saved=dataset.num_episodes)
         with self.session.lock:
             if self.session.recorder is not None:
                 raise RuntimeError("teleop session already has a recorder")
             self.session.recorder = self.bridge
+        self.saver = SaveQueue(dataset, nice=ENCODER_NICE, on_saved=self._saved, on_failed=self._save_failed)
         self._wrap_dataset(dataset)
         app.emit("pico_record", {"event": "bridge_installed", "dataset_root": str(dataset.root),
                                  "repo_id": dataset.repo_id, "start_episode": dataset.num_episodes})
 
     def _wrap_dataset(self, dataset):
-        save, clear = dataset.save_episode, dataset.clear_episode_buffer
+        save, clear, finalize = dataset.save_episode, dataset.clear_episode_buffer, dataset.finalize
 
-        def save_episode(*a, **k):
-            self.in_save = True
+        def save_episode(episode_data=None, parallel_encoding=True):
+            if episode_data is not None:  # not used by lerobot-record: lerobot's own in-process save
+                return save(episode_data, parallel_encoding)
+            writer, index = dataset.writer, self.next_index
             try:
                 with self.keepalive():
-                    result = save(*a, **k)
+                    writer._wait_image_writer()  # this episode's PNG frames are complete on disk
+                buffer = writer.episode_buffer
+                frames = int(buffer["size"])
+                validate_episode_buffer(buffer, index, dataset.meta.features)
+                pending = self.saver.submit(index, buffer)
             except BaseException as exc:
                 self.bridge.fail(f"save_episode: {type(exc).__name__} {exc}".strip())
                 raise
-            finally:
-                self.in_save = False
-            self.bridge.committed(True, dataset.num_episodes)
-            self._log("saved", episode=dataset.num_episodes - 1)
-            return result
+            self.next_index = index + 1
+            writer.episode_buffer = writer._create_episode_buffer(episode_index=self.next_index)
+            self.bridge.committed(True, self.next_index)
+            self._log("save_queued", episode=index, frames=frames, pending=pending)
 
         def clear_episode_buffer(*a, **k):
-            if self.in_save:  # internal call from save_episode
-                return clear(*a, **k)
             with self.keepalive():
                 result = clear(*a, **k)
+            # lerobot numbers a new buffer by the saved episodes; queued saves are not counted there yet
+            dataset.writer.episode_buffer = dataset.writer._create_episode_buffer(episode_index=self.next_index)
             recorded = self.bridge.state == "DISCARDING"
-            self.bridge.committed(False if recorded else None, dataset.num_episodes)
+            self.bridge.committed(False if recorded else None, self.next_index)
             if recorded:
-                self._log("discarded", episode=dataset.num_episodes)
+                self._log("discarded", episode=self.next_index)
             return result
 
+        def finalize_dataset(*a, **k):
+            self.wait_for_saves()
+            self._sync_info(strict=True)
+            return finalize(*a, **k)
+
         dataset.save_episode, dataset.clear_episode_buffer = save_episode, clear_episode_buffer
+        dataset.finalize = finalize_dataset
+
+    # ---------------------------------------------------------------- background saves
+    def _saved(self, episode, result, pending):  # saver thread
+        self._log("saved", episode=episode, save_s=result["save_s"], pending=pending)
+
+    def _save_failed(self, episode, error, job_dir):  # saver thread
+        self._log("save_failed", episode=episode, error=error, job_dir=job_dir)
+        self.bridge.fail(f"background save: {error}")
+
+    def _check_saver(self):
+        if self.saver.error:
+            raise RuntimeError(f"pico-record background save failed: {self.saver.error}")
+
+    def _sync_info(self, strict=False):
+        """Reload info.json (episode/frame totals) after background saves; main thread only."""
+        done = self.saver.done
+        if done == self.synced:
+            return
+        try:
+            self.dataset.meta.info = dataset_metadata.load_info(self.dataset.meta.root)
+        except Exception:
+            if strict:
+                raise
+            return  # a save process may be rewriting info.json right now; next time
+        self.synced = done
+
+    def wait_for_saves(self):
+        if self.saver is None or self.saver.wait_idle(0):
+            return
+        self._log("waiting_for_saves", pending=self.saver.pending)
+        with self.keepalive():
+            while True:
+                try:
+                    if self.saver.wait_idle(0.5):
+                        break
+                except KeyboardInterrupt:
+                    # Stopping now would leave the dataset with half-written episodes; the save
+                    # processes run in their own session and are not hit by Ctrl+C.
+                    logger.warning("pico-record: still saving %d episode(s); waiting for them (robot stays held)",
+                                   self.saver.pending)
+        if self.saver.error:
+            logger.error("pico-record: background save failed: %s", self.saver.error)
 
     # ---------------------------------------------------------------- control without recording
     def step(self):
@@ -119,7 +184,7 @@ class Driver:
 
     @contextmanager
     def keepalive(self):
-        """Keep the teleop -> robot loop alive while lerobot's main thread encodes/clears."""
+        """Keep the teleop -> robot loop alive while lerobot's main thread is busy."""
         stop = threading.Event()
 
         def run():
@@ -164,9 +229,15 @@ class Driver:
 
     def episode(self, kw):
         events, bridge, dataset = self.events, self.bridge, self.dataset
-        index = dataset.num_episodes
-        self._log("waiting", episode=index, hint="headset: A home -> A start")
-        self.idle_until(lambda: events["stop_recording"] or bridge.begin_recording())
+        self._check_saver()
+        self._sync_info()
+        index = self.next_index
+        self._log("waiting", episode=index, saves_pending=self.saver.pending, hint="headset: A home -> A start")
+
+        def start():
+            self._check_saver()
+            return events["stop_recording"] or bridge.begin_recording()
+        self.idle_until(start)
         if bridge.state != "RECORDING":  # Esc before the episode started: nothing to save
             events["rerecord_episode"], events["exit_early"] = True, False
             return
@@ -229,7 +300,8 @@ def pico_record_loop(**kw):
 
 class _NiceProcessPool(concurrent.futures.ProcessPoolExecutor):
     """lerobot encodes each camera's video in a worker process when an episode is saved.
-    Run those workers at low priority so the VR link and the control loop keep their CPU."""
+    Run those workers at low priority so the VR link and the control loop keep their CPU.
+    (Saves now run in save_worker processes, already at nice 10; kept for lerobot's own paths.)"""
 
     def __init__(self, *args, **kwargs):
         if kwargs.get("initializer") is None:

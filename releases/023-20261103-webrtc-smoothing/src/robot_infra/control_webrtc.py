@@ -43,7 +43,14 @@ class WebRTCInputServer:
             raise ValueError('WebRTC negotiation timed out') from None
 
     async def _offer(self, body):
-        if self.peer is not None:raise ValueError('WebRTC input already connected; close the previous page first')
+        if self.peer is not None:
+            # Newest page takes over: an abruptly closed page may never deliver its close to the
+            # server, which then rejected every new page until restart. Pause first (robot holds
+            # the measured pose; the new page must re-engage), then drop the old connection.
+            stale, self.peer = self.peer, None
+            if self.active_pause:await self.active_pause('webrtc_replaced')
+            try:await asyncio.wait_for(stale.close(), timeout=3)
+            except Exception:pass
         pc = self.Peer(self.Configuration(iceServers=[]))
         self.peer = pc
         queue = asyncio.Queue(maxsize=32)
